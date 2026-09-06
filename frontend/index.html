@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>SmartFileVault</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <header>
+        <h1>SmartFileVault</h1>
+        <p>Automated File Compression and Storage Management</p>
+    </header>
+
+    <main>
+
+        <section class="dashboard">
+
+            <div class="card">
+                <h2>Files Scanned</h2>
+                <p id="filesScanned">0</p>
+            </div>
+
+            <div class="card">
+                <h2>Inactive Files</h2>
+                <p id="inactiveFiles">0</p>
+            </div>
+
+            <div class="card">
+                <h2>Storage Saved</h2>
+                <p id="storageSaved">0 MB</p>
+            </div>
+
+        </section>
+
+        <section class="files">
+
+            <h2>File Management</h2>
+
+            <button id="scanButton">
+                Scan Files
+            </button>
+
+            <div id="fileList">
+                No files scanned yet.
+            </div>
+
+        </section>
+
+    </main>
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>

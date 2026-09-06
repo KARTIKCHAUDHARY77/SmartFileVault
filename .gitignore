@@ -1,1 +1,9 @@
 .DS_Store
+# Compiled files
+SmartFileVault
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
