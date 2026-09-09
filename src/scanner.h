@@ -4,11 +4,11 @@
 #include <string>
 #include <vector>
 
-struct FileInfo
-{
+struct FileInfo {
     std::string name;
     std::string path;
-    long long size;
+    uintmax_t size;
+    long long lastAccess;
 };
 
 std::vector<FileInfo> scanDirectory(const std::string& directoryPath);
