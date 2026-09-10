@@ -1,12 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>SmartFileVault</title>
-
     <link rel="stylesheet" href="style.css">
 </head>
 
@@ -14,42 +11,68 @@
 
     <header>
         <h1>SmartFileVault</h1>
-        <p>Automated File Compression and Storage Management</p>
+        <p>Smart Storage Management</p>
     </header>
 
     <main>
 
-        <section class="dashboard">
-
+        <section class="stats">
             <div class="card">
-                <h2>Files Scanned</h2>
+                <h3>Files Scanned</h3>
                 <p id="filesScanned">0</p>
             </div>
 
             <div class="card">
-                <h2>Inactive Files</h2>
+                <h3>Inactive Files</h3>
                 <p id="inactiveFiles">0</p>
             </div>
 
             <div class="card">
-                <h2>Storage Saved</h2>
+                <h3>Storage Saved</h3>
                 <p id="storageSaved">0 MB</p>
             </div>
-
         </section>
 
-        <section class="files">
+        <section class="controls">
+            <h2>Scan Files</h2>
 
-            <h2>File Management</h2>
+            <label for="inactivityPeriod">
+                Inactivity Period:
+            </label>
 
-            <button id="scanButton">
-                Scan Files
-            </button>
+            <select id="inactivityPeriod">
+                <option value="7">7 Days</option>
+                <option value="30">30 Days</option>
+                <option value="60">60 Days</option>
+                <option value="90">90 Days</option>
+            </select>
 
-            <div id="fileList">
-                No files scanned yet.
-            </div>
+            <button id="scanButton">Scan Files</button>
+        </section>
 
+        <section class="file-section">
+            <h2>Files</h2>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Size</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+
+                <tbody id="fileTable">
+                    <tr>
+                        <td colspan="3">No files scanned yet.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section class="status">
+            <h3>Status</h3>
+            <p id="statusMessage">Ready to scan files.</p>
         </section>
 
     </main>
@@ -57,5 +80,4 @@
     <script src="script.js"></script>
 
 </body>
-
 </html>
