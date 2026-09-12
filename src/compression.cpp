@@ -1,5 +1,6 @@
 #include "compression.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <zlib.h>
@@ -19,10 +20,12 @@ bool compressFile(
         return false;
     }
 
-    gzFile output =
-        gzopen(outputPath.c_str(), "wb");
+    gzFile output = gzopen(
+        outputPath.c_str(),
+        "wb"
+    );
 
-    if (!output) {
+    if (output == nullptr) {
         return false;
     }
 
@@ -30,7 +33,10 @@ bool compressFile(
 
     while (input) {
 
-        input.read(buffer, sizeof(buffer));
+        input.read(
+            buffer,
+            sizeof(buffer)
+        );
 
         std::streamsize bytesRead =
             input.gcount();
@@ -51,19 +57,21 @@ bool compressFile(
         }
     }
 
-    int closeResult = gzclose(output);
+    int result = gzclose(output);
 
-    return closeResult == Z_OK;
+    return result == Z_OK;
 }
 
 bool decompressFile(
     const std::string& compressedPath,
     const std::string& outputPath
 ) {
-    gzFile input =
-        gzopen(compressedPath.c_str(), "rb");
+    gzFile input = gzopen(
+        compressedPath.c_str(),
+        "rb"
+    );
 
-    if (!input) {
+    if (input == nullptr) {
         return false;
     }
 
@@ -79,14 +87,13 @@ bool decompressFile(
 
     char buffer[8192];
 
-    int bytesRead;
+    int bytesRead = 0;
 
-    while ((bytesRead =
-                gzread(
-                    input,
-                    buffer,
-                    sizeof(buffer)
-                )) > 0) {
+    while ((bytesRead = gzread(
+                input,
+                buffer,
+                sizeof(buffer)
+            )) > 0) {
 
         output.write(
             buffer,
@@ -99,14 +106,16 @@ bool decompressFile(
         }
     }
 
-    int errorNumber = Z_OK;
+    int errorCode = Z_OK;
 
-    gzerror(input, &errorNumber);
+    gzerror(
+        input,
+        &errorCode
+    );
 
     gzclose(input);
 
-    return errorNumber == Z_OK ||
-           errorNumber == Z_STREAM_END;
+    return errorCode == Z_OK;
 }
 
 bool compressionProvidesBenefit(
@@ -127,4 +136,34 @@ bool compressionProvidesBenefit(
 
     return fs::file_size(compressedPath) <
            fs::file_size(originalPath);
+}
+
+double getCompressionPercentage(
+    const std::string& originalPath,
+    const std::string& compressedPath
+) {
+    if (!fs::exists(originalPath) ||
+        !fs::exists(compressedPath)) {
+
+        return 0.0;
+    }
+
+    std::uintmax_t originalSize =
+        fs::file_size(originalPath);
+
+    std::uintmax_t compressedSize =
+        fs::file_size(compressedPath);
+
+    if (originalSize == 0) {
+        return 0.0;
+    }
+
+    double saved =
+        static_cast<double>(
+            originalSize - compressedSize
+        );
+
+    return (saved /
+            static_cast<double>(originalSize))
+           * 100.0;
 }

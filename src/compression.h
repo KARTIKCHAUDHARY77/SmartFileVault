@@ -18,4 +18,9 @@ bool compressionProvidesBenefit(
     const std::string& compressedPath
 );
 
+double getCompressionPercentage(
+    const std::string& originalPath,
+    const std::string& compressedPath
+);
+
 #endif

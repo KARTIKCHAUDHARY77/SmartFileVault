@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <string>
 
 namespace fs = std::filesystem;
 
@@ -30,66 +29,85 @@ int main() {
         }
     }
 
-    std::cout << "Original size: "
-              << fs::file_size(original)
-              << " bytes\n";
+    std::cout
+        << "Original size: "
+        << fs::file_size(original)
+        << " bytes\n";
 
-    // Compress.
     if (!compressFile(
             original,
             compressed
         )) {
 
-        std::cout << "Compression failed.\n";
+        std::cout
+            << "Compression failed.\n";
+
         return 1;
     }
 
-    std::cout << "Compressed size: "
-              << fs::file_size(compressed)
-              << " bytes\n";
+    std::cout
+        << "Compressed size: "
+        << fs::file_size(compressed)
+        << " bytes\n";
 
-    // Check whether compression saved space.
     if (compressionProvidesBenefit(
             original,
             compressed
         )) {
 
         std::cout
-            << "Compression provides storage benefit.\n";
+            << "Storage benefit: YES\n";
+
+        std::cout
+            << "Storage saved: "
+            << getCompressionPercentage(
+                   original,
+                   compressed
+               )
+            << "%\n";
     }
     else {
 
         std::cout
-            << "Compression provides no storage benefit.\n";
+            << "Storage benefit: NO\n";
     }
 
-    // Decompress.
     if (!decompressFile(
             compressed,
             restored
         )) {
 
-        std::cout << "Decompression failed.\n";
+        std::cout
+            << "Decompression failed.\n";
+
         return 1;
     }
 
     std::cout
         << "Decompression completed.\n";
 
-    // Compare restored file size.
+    std::cout
+        << "Original size: "
+        << fs::file_size(original)
+        << " bytes\n";
+
+    std::cout
+        << "Restored size: "
+        << fs::file_size(restored)
+        << " bytes\n";
+
     if (fs::file_size(original) ==
         fs::file_size(restored)) {
 
         std::cout
-            << "Restored file size matches original.\n";
+            << "Restoration size check: PASS\n";
     }
     else {
 
         std::cout
-            << "Restored file size does not match original.\n";
+            << "Restoration size check: FAIL\n";
     }
 
-    // Clean test files.
     fs::remove(original);
     fs::remove(compressed);
     fs::remove(restored);
