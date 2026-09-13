@@ -1,83 +1,230 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>SmartFileVault</title>
+
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <header>
-        <h1>SmartFileVault</h1>
-        <p>Smart Storage Management</p>
+    <header class="topbar">
+
+        <div class="brand">
+            <h1>SmartFileVault</h1>
+            <p>Smart storage, safe recovery.</p>
+        </div>
+
+        <button id="scanBtn" class="primary-btn">
+            Scan Storage
+        </button>
+
     </header>
+
 
     <main>
 
+        <section class="hero">
+
+            <div>
+                <span class="eyebrow">
+                    STORAGE MANAGEMENT
+                </span>
+
+                <h2>
+                    Make space without
+                    losing what matters.
+                </h2>
+
+                <p>
+                    SmartFileVault finds inactive files,
+                    identifies files suitable for compression,
+                    and keeps your data recoverable.
+                </p>
+
+                <button id="heroScanBtn" class="primary-btn">
+                    Start Scan
+                </button>
+            </div>
+
+        </section>
+
+
         <section class="stats">
-            <div class="card">
-                <h3>Files Scanned</h3>
-                <p id="filesScanned">0</p>
+
+            <div class="stat-card">
+                <span>Total Files</span>
+                <strong id="totalFiles">0</strong>
             </div>
 
-            <div class="card">
-                <h3>Inactive Files</h3>
-                <p id="inactiveFiles">0</p>
+            <div class="stat-card">
+                <span>Inactive Files</span>
+                <strong id="inactiveFiles">0</strong>
             </div>
 
-            <div class="card">
-                <h3>Storage Saved</h3>
-                <p id="storageSaved">0 MB</p>
+            <div class="stat-card">
+                <span>Archived Files</span>
+                <strong id="archivedFiles">0</strong>
             </div>
+
+            <div class="stat-card">
+                <span>Space Saved</span>
+                <strong id="spaceSaved">0 MB</strong>
+            </div>
+
         </section>
 
-        <section class="controls">
-            <h2>Scan Files</h2>
 
-            <label for="inactivityPeriod">
-                Inactivity Period:
-            </label>
+        <section class="storage-section">
 
-            <select id="inactivityPeriod">
-                <option value="7">7 Days</option>
-                <option value="30">30 Days</option>
-                <option value="60">60 Days</option>
-                <option value="90">90 Days</option>
-            </select>
+            <div class="section-heading">
+                <div>
+                    <span class="eyebrow">
+                        STORAGE
+                    </span>
 
-            <button id="scanButton">Scan Files</button>
+                    <h3>Storage overview</h3>
+                </div>
+
+                <span id="storageStatus" class="status-pill">
+                    Ready
+                </span>
+            </div>
+
+            <div class="storage-card">
+
+                <div class="storage-info">
+
+                    <div>
+                        <span>Used</span>
+                        <strong id="usedStorage">0 GB</strong>
+                    </div>
+
+                    <div>
+                        <span>Free</span>
+                        <strong id="freeStorage">0 GB</strong>
+                    </div>
+
+                    <div>
+                        <span>Restore Safety</span>
+                        <strong id="restoreSafety">0 MB</strong>
+                    </div>
+
+                </div>
+
+                <div class="progress-track">
+                    <div id="storageBar"
+                         class="progress-bar">
+                    </div>
+                </div>
+
+            </div>
+
         </section>
 
-        <section class="file-section">
-            <h2>Files</h2>
 
-            <table>
-                <thead>
-                    <tr>
-                        <th>File Name</th>
-                        <th>Size</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
+        <section class="files-section">
 
-                <tbody id="fileTable">
-                    <tr>
-                        <td colspan="3">No files scanned yet.</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div class="section-heading">
+
+                <div>
+                    <span class="eyebrow">
+                        FILES
+                    </span>
+
+                    <h3>File activity</h3>
+                </div>
+
+                <select id="filterSelect">
+
+                    <option value="all">
+                        All files
+                    </option>
+
+                    <option value="inactive">
+                        Inactive
+                    </option>
+
+                    <option value="archived">
+                        Archived
+                    </option>
+
+                    <option value="skipped">
+                        Skipped
+                    </option>
+
+                </select>
+
+            </div>
+
+
+            <div class="table-wrapper">
+
+                <table>
+
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Type</th>
+                            <th>Size</th>
+                            <th>Last Access</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="fileTable">
+                    </tbody>
+
+                </table>
+
+            </div>
+
         </section>
 
-        <section class="status">
-            <h3>Status</h3>
-            <p id="statusMessage">Ready to scan files.</p>
+
+        <section class="restore-section">
+
+            <div class="section-heading">
+
+                <div>
+                    <span class="eyebrow">
+                        RESTORATION
+                    </span>
+
+                    <h3>Restore safety</h3>
+                </div>
+
+            </div>
+
+            <div id="restoreMessage"
+                 class="restore-message">
+
+                Scan your storage to see restore
+                requirements.
+
+            </div>
+
         </section>
 
     </main>
 
+
+    <footer>
+
+        <p>
+            SmartFileVault · C++17 · zlib
+        </p>
+
+    </footer>
+
+
     <script src="script.js"></script>
 
 </body>
+
 </html>
