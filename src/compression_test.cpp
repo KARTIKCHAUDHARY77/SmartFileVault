@@ -17,7 +17,7 @@ int main() {
     const std::string restored =
         "compression_restored.txt";
 
-    // Create repetitive test data.
+    // Create test data.
     {
         std::ofstream file(
             original,
@@ -79,6 +79,9 @@ int main() {
 
         std::cout
             << "Decompression failed.\n";
+
+        fs::remove(original);
+        fs::remove(compressed);
 
         return 1;
     }
