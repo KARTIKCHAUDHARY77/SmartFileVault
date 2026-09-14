@@ -3,40 +3,54 @@ const files = [
         name: "notes.txt",
         type: "TXT",
         size: "2.4 MB",
-        lastAccess: "94 days ago",
-        status: "inactive"
+        lastActivity: "94 days ago",
+        status: "inactive",
+        reason: "Candidate for compression"
     },
 
     {
         name: "project.cpp",
         type: "CPP",
         size: "18 KB",
-        lastAccess: "103 days ago",
-        status: "inactive"
+        lastActivity: "103 days ago",
+        status: "inactive",
+        reason: "Candidate for compression"
+    },
+
+    {
+        name: "college_work.pdf",
+        type: "PDF",
+        size: "12 MB",
+        lastActivity: "110 days ago",
+        status: "archived",
+        reason: "Compressed and stored"
     },
 
     {
         name: "photo.jpg",
         type: "JPG",
         size: "4.8 MB",
-        lastAccess: "120 days ago",
-        status: "skipped"
+        lastActivity: "120 days ago",
+        status: "skipped",
+        reason: "Already compressed format"
     },
 
     {
         name: "lecture.mp4",
         type: "MP4",
         size: "840 MB",
-        lastAccess: "150 days ago",
-        status: "skipped"
+        lastActivity: "150 days ago",
+        status: "skipped",
+        reason: "Already compressed media"
     },
 
     {
-        name: "old_report.pdf",
-        type: "PDF",
-        size: "12 MB",
-        lastAccess: "110 days ago",
-        status: "archived"
+        name: "current_notes.txt",
+        type: "TXT",
+        size: "1.1 MB",
+        lastActivity: "2 days ago",
+        status: "active",
+        reason: "Recently modified"
     }
 ];
 
@@ -54,128 +68,202 @@ const dashboardData = {
 };
 
 
-const fileTable = document.getElementById(
-    "fileTable"
-);
+const fileTable =
+    document.getElementById("fileTable");
 
-const filterSelect = document.getElementById(
-    "filterSelect"
-);
+const filterSelect =
+    document.getElementById("filterSelect");
+
+const inactivityDays =
+    document.getElementById("inactivityDays");
 
 
 function showStats() {
 
-    document.getElementById(
-        "totalFiles"
-    ).textContent = dashboardData.totalFiles;
+    document.getElementById("totalFiles")
+        .textContent =
+        dashboardData.totalFiles;
 
-    document.getElementById(
-        "inactiveFiles"
-    ).textContent = dashboardData.inactiveFiles;
+    document.getElementById("inactiveFiles")
+        .textContent =
+        dashboardData.inactiveFiles;
 
-    document.getElementById(
-        "archivedFiles"
-    ).textContent = dashboardData.archivedFiles;
+    document.getElementById("archivedFiles")
+        .textContent =
+        dashboardData.archivedFiles;
 
-    document.getElementById(
-        "spaceSaved"
-    ).textContent =
+    document.getElementById("spaceSaved")
+        .textContent =
         dashboardData.spaceSaved + " GB";
 
-    document.getElementById(
-        "usedStorage"
-    ).textContent =
+    document.getElementById("usedStorage")
+        .textContent =
         dashboardData.usedStorage + " GB";
 
-    document.getElementById(
-        "freeStorage"
-    ).textContent =
+    document.getElementById("freeStorage")
+        .textContent =
         dashboardData.freeStorage + " GB";
 
-    document.getElementById(
-        "restoreSafety"
-    ).textContent =
+    document.getElementById("restoreSafety")
+        .textContent =
         dashboardData.restoreSafety + " MB";
 
-    const total =
+    document.getElementById("restoreFreeSpace")
+        .textContent =
+        dashboardData.freeStorage + " GB";
+
+    document.getElementById("restoreRequirement")
+        .textContent =
+        dashboardData.restoreSafety + " MB";
+
+
+    const totalStorage =
         dashboardData.usedStorage +
         dashboardData.freeStorage;
 
     const usedPercent =
-        (dashboardData.usedStorage / total) * 100;
+        (dashboardData.usedStorage /
+            totalStorage) * 100;
 
-    document.getElementById(
-        "storageBar"
-    ).style.width = usedPercent + "%";
+    document.getElementById("storageBar")
+        .style.width =
+        usedPercent + "%";
 
-    document.getElementById(
-        "restoreMessage"
-    ).textContent =
-        "Current free space: " +
-        dashboardData.freeStorage +
-        " GB. Some archived files may require up to " +
-        dashboardData.restoreSafety +
-        " MB to restore.";
 
+    const freeMB =
+        dashboardData.freeStorage * 1024;
+
+    const warning =
+        document.getElementById(
+            "restoreWarning"
+        );
+
+    if (
+        freeMB <
+        dashboardData.restoreSafety
+    ) {
+
+        warning.textContent =
+            "Warning: some archived files may " +
+            "not have enough space to restore.";
+
+        warning.classList.add("warning");
+
+    } else {
+
+        warning.textContent =
+            "Current storage is sufficient " +
+            "for the current archive set.";
+
+        warning.classList.remove("warning");
+    }
 }
 
 
-function statusText(status) {
+function createStatus(status) {
+
+    const span =
+        document.createElement("span");
+
+    span.className =
+        "status " + status;
+
+    if (status === "active") {
+        span.textContent = "Active";
+    }
+    else if (status === "inactive") {
+        span.textContent = "Inactive";
+    }
+    else if (status === "archived") {
+        span.textContent = "Archived";
+    }
+    else {
+        span.textContent = "Skipped";
+    }
+
+    return span;
+}
+
+
+function getAction(status) {
 
     if (status === "inactive") {
-        return "Inactive";
+        return "Review";
     }
 
     if (status === "archived") {
-        return "Archived";
+        return "Restore";
     }
 
     if (status === "skipped") {
-        return "Skipped";
+        return "Details";
     }
 
-    return status;
+    return "View";
 }
 
 
 function createRow(file) {
 
-    const row = document.createElement("tr");
+    const row =
+        document.createElement("tr");
 
-    let action = "Review";
+    const statusCell =
+        document.createElement("td");
 
-    if (file.status === "inactive") {
-        action = "Compress";
-    }
+    statusCell.appendChild(
+        createStatus(file.status)
+    );
 
-    if (file.status === "archived") {
-        action = "Restore";
-    }
 
-    if (file.status === "skipped") {
-        action = "Details";
-    }
+    const actionCell =
+        document.createElement("td");
+
+    const button =
+        document.createElement("button");
+
+    button.className =
+        "action-btn";
+
+    button.textContent =
+        getAction(file.status);
+
+    button.addEventListener(
+        "click",
+        function () {
+
+            alert(
+                file.name +
+                "\n\nStatus: " +
+                file.status +
+                "\nReason: " +
+                file.reason
+            );
+
+        }
+    );
+
+    actionCell.appendChild(button);
+
 
     row.innerHTML = `
         <td>${file.name}</td>
         <td>${file.type}</td>
         <td>${file.size}</td>
-        <td>${file.lastAccess}</td>
-
-        <td>
-            <span class="status ${file.status}">
-                ${statusText(file.status)}
-            </span>
-        </td>
-
-        <td>
-            <button
-                class="action-btn"
-                onclick="handleAction('${file.name}', '${action}')">
-                ${action}
-            </button>
-        </td>
+        <td>${file.lastActivity}</td>
     `;
+
+    row.appendChild(statusCell);
+
+    const reasonCell =
+        document.createElement("td");
+
+    reasonCell.textContent =
+        file.reason;
+
+    row.appendChild(reasonCell);
+
+    row.appendChild(actionCell);
 
     return row;
 }
@@ -191,29 +279,20 @@ function showFiles(filter = "all") {
 
         visibleFiles =
             files.filter(
-                file => file.status === filter
+                file =>
+                    file.status === filter
             );
+
     }
 
-    visibleFiles.forEach(file => {
+    visibleFiles.forEach(
+        file => {
 
-        fileTable.appendChild(
-            createRow(file)
-        );
+            fileTable.appendChild(
+                createRow(file)
+            );
 
-    });
-
-}
-
-
-function handleAction(
-    fileName,
-    action
-) {
-    alert(
-        action +
-        " action selected for " +
-        fileName
+        }
     );
 }
 
@@ -225,17 +304,38 @@ function startScan() {
             "storageStatus"
         );
 
-    status.textContent = "Scanning...";
+    const scanStatus =
+        document.getElementById(
+            "scanStatus"
+        );
 
-    setTimeout(() => {
+    const selectedDays =
+        inactivityDays.value;
+
+
+    status.textContent =
+        "Scanning...";
+
+    scanStatus.textContent =
+        "Scanning using " +
+        selectedDays +
+        "-day threshold...";
+
+
+    setTimeout(function () {
 
         status.textContent =
             "Scan complete";
 
+        scanStatus.textContent =
+            "Scan complete · " +
+            selectedDays +
+            "-day threshold";
+
         showStats();
         showFiles();
 
-    }, 700);
+    }, 800);
 }
 
 
@@ -243,6 +343,24 @@ filterSelect.addEventListener(
     "change",
     function () {
         showFiles(this.value);
+    }
+);
+
+
+inactivityDays.addEventListener(
+    "change",
+    function () {
+
+        const scanStatus =
+            document.getElementById(
+                "scanStatus"
+            );
+
+        scanStatus.textContent =
+            "Threshold changed to " +
+            this.value +
+            " days";
+
     }
 );
 
