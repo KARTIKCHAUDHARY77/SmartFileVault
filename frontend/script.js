@@ -23,7 +23,8 @@ const files = [
         size: "12 MB",
         lastActivity: "110 days ago",
         status: "archived",
-        reason: "Compressed and stored"
+        reason: "Compressed and stored",
+        requiredSpace: "12 MB"
     },
 
     {
@@ -56,12 +57,17 @@ const files = [
 
 
 const dashboardData = {
+
     totalFiles: 1284,
+
     inactiveFiles: 137,
+
     archivedFiles: 42,
+
     spaceSaved: 2.84,
 
     usedStorage: 72,
+
     freeStorage: 28,
 
     restoreSafety: 850
@@ -95,6 +101,7 @@ function showStats() {
     document.getElementById("spaceSaved")
         .textContent =
         dashboardData.spaceSaved + " GB";
+
 
     document.getElementById("usedStorage")
         .textContent =
@@ -138,6 +145,7 @@ function showStats() {
             "restoreWarning"
         );
 
+
     if (
         freeMB <
         dashboardData.restoreSafety
@@ -147,15 +155,20 @@ function showStats() {
             "Warning: some archived files may " +
             "not have enough space to restore.";
 
-        warning.classList.add("warning");
+        warning.classList.add(
+            "warning"
+        );
 
-    } else {
+    }
+    else {
 
         warning.textContent =
             "Current storage is sufficient " +
             "for the current archive set.";
 
-        warning.classList.remove("warning");
+        warning.classList.remove(
+            "warning"
+        );
     }
 }
 
@@ -167,6 +180,7 @@ function createStatus(status) {
 
     span.className =
         "status " + status;
+
 
     if (status === "active") {
         span.textContent = "Active";
@@ -180,6 +194,7 @@ function createStatus(status) {
     else {
         span.textContent = "Skipped";
     }
+
 
     return span;
 }
@@ -208,12 +223,32 @@ function createRow(file) {
     const row =
         document.createElement("tr");
 
+
+    row.innerHTML = `
+        <td>${file.name}</td>
+        <td>${file.type}</td>
+        <td>${file.size}</td>
+        <td>${file.lastActivity}</td>
+    `;
+
+
     const statusCell =
         document.createElement("td");
 
     statusCell.appendChild(
         createStatus(file.status)
     );
+
+    row.appendChild(statusCell);
+
+
+    const reasonCell =
+        document.createElement("td");
+
+    reasonCell.textContent =
+        file.reason;
+
+    row.appendChild(reasonCell);
 
 
     const actionCell =
@@ -228,42 +263,32 @@ function createRow(file) {
     button.textContent =
         getAction(file.status);
 
+
     button.addEventListener(
         "click",
         function () {
 
-            alert(
-                file.name +
-                "\n\nStatus: " +
-                file.status +
-                "\nReason: " +
-                file.reason
-            );
+            if (
+                file.status === "archived"
+            ) {
+
+                openRestoreModal(file);
+
+            }
+            else {
+
+                showFileMessage(file);
+
+            }
 
         }
     );
 
+
     actionCell.appendChild(button);
 
-
-    row.innerHTML = `
-        <td>${file.name}</td>
-        <td>${file.type}</td>
-        <td>${file.size}</td>
-        <td>${file.lastActivity}</td>
-    `;
-
-    row.appendChild(statusCell);
-
-    const reasonCell =
-        document.createElement("td");
-
-    reasonCell.textContent =
-        file.reason;
-
-    row.appendChild(reasonCell);
-
     row.appendChild(actionCell);
+
 
     return row;
 }
@@ -275,6 +300,7 @@ function showFiles(filter = "all") {
 
     let visibleFiles = files;
 
+
     if (filter !== "all") {
 
         visibleFiles =
@@ -284,6 +310,7 @@ function showFiles(filter = "all") {
             );
 
     }
+
 
     visibleFiles.forEach(
         file => {
@@ -297,9 +324,166 @@ function showFiles(filter = "all") {
 }
 
 
+function showFileMessage(file) {
+
+    alert(
+        file.name +
+        "\n\nStatus: " +
+        file.status +
+        "\nReason: " +
+        file.reason
+    );
+}
+
+
+function openRestoreModal(file) {
+
+    const modal =
+        document.getElementById(
+            "restoreModal"
+        );
+
+    const fileName =
+        document.getElementById(
+            "restoreFileName"
+        );
+
+    const originalPath =
+        document.getElementById(
+            "restoreOriginalPath"
+        );
+
+    const requiredSpace =
+        document.getElementById(
+            "restoreRequiredSpace"
+        );
+
+    const availableSpace =
+        document.getElementById(
+            "restoreAvailableSpace"
+        );
+
+    const description =
+        document.getElementById(
+            "restoreDescription"
+        );
+
+    const warning =
+        document.getElementById(
+            "restoreWarningModal"
+        );
+
+    const location =
+        document.getElementById(
+            "restoreLocation"
+        );
+
+
+    fileName.textContent =
+        "Restore " + file.name;
+
+
+    originalPath.textContent =
+        "/Users/user/Documents/" +
+        file.name;
+
+
+    requiredSpace.textContent =
+        file.requiredSpace || "150 MB";
+
+
+    availableSpace.textContent =
+        dashboardData.freeStorage +
+        " GB";
+
+
+    description.textContent =
+        "SmartFileVault will try to restore " +
+        "the file to its original location.";
+
+
+    warning.classList.add(
+        "hidden"
+    );
+
+
+    location.value =
+        "/Users/user/Documents";
+
+
+    modal.dataset.fileName =
+        file.name;
+
+
+    modal.classList.remove(
+        "hidden"
+    );
+}
+
+
+function closeRestoreModal() {
+
+    document.getElementById(
+        "restoreModal"
+    ).classList.add(
+        "hidden"
+    );
+}
+
+
+function confirmRestore() {
+
+    const modal =
+        document.getElementById(
+            "restoreModal"
+        );
+
+    const fileName =
+        modal.dataset.fileName;
+
+    const location =
+        document.getElementById(
+            "restoreLocation"
+        ).value.trim();
+
+    const warning =
+        document.getElementById(
+            "restoreWarningModal"
+        );
+
+
+    if (location === "") {
+
+        warning.textContent =
+            "Please enter a restoration location.";
+
+        warning.classList.remove(
+            "hidden"
+        );
+
+        return;
+    }
+
+
+    /*
+     * Frontend prototype only.
+     * The real C++ restoration function
+     * will be connected later.
+     */
+    warning.textContent =
+        fileName +
+        " will be restored to:\n" +
+        location;
+
+    warning.classList.remove(
+        "hidden"
+    );
+}
+
+
 function startScan() {
 
-    const status =
+    const storageStatus =
         document.getElementById(
             "storageStatus"
         );
@@ -313,8 +497,9 @@ function startScan() {
         inactivityDays.value;
 
 
-    status.textContent =
+    storageStatus.textContent =
         "Scanning...";
+
 
     scanStatus.textContent =
         "Scanning using " +
@@ -322,27 +507,35 @@ function startScan() {
         "-day threshold...";
 
 
-    setTimeout(function () {
+    setTimeout(
+        function () {
 
-        status.textContent =
-            "Scan complete";
+            storageStatus.textContent =
+                "Scan complete";
 
-        scanStatus.textContent =
-            "Scan complete · " +
-            selectedDays +
-            "-day threshold";
+            scanStatus.textContent =
+                "Scan complete · " +
+                selectedDays +
+                "-day threshold";
 
-        showStats();
-        showFiles();
+            showStats();
 
-    }, 800);
+            showFiles();
+
+        },
+        800
+    );
 }
 
 
 filterSelect.addEventListener(
     "change",
     function () {
-        showFiles(this.value);
+
+        showFiles(
+            this.value
+        );
+
     }
 );
 
@@ -360,7 +553,6 @@ inactivityDays.addEventListener(
             "Threshold changed to " +
             this.value +
             " days";
-
     }
 );
 
@@ -381,5 +573,30 @@ document.getElementById(
 );
 
 
+document.getElementById(
+    "closeRestore"
+).addEventListener(
+    "click",
+    closeRestoreModal
+);
+
+
+document.getElementById(
+    "cancelRestore"
+).addEventListener(
+    "click",
+    closeRestoreModal
+);
+
+
+document.getElementById(
+    "confirmRestore"
+).addEventListener(
+    "click",
+    confirmRestore
+);
+
+
 showStats();
+
 showFiles();

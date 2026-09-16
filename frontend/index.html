@@ -66,8 +66,6 @@
         </section>
 
 
-        <!-- Scan settings -->
-
         <section class="settings-section">
 
             <div class="section-heading">
@@ -77,7 +75,9 @@
                         SCAN SETTINGS
                     </span>
 
-                    <h3>When should a file be considered inactive?</h3>
+                    <h3>
+                        When should a file be considered inactive?
+                    </h3>
                 </div>
 
             </div>
@@ -122,8 +122,6 @@
         </section>
 
 
-        <!-- Statistics -->
-
         <section class="stats">
 
             <div class="stat-card">
@@ -149,8 +147,6 @@
         </section>
 
 
-        <!-- Storage -->
-
         <section class="storage-section">
 
             <div class="section-heading">
@@ -160,7 +156,9 @@
                         STORAGE
                     </span>
 
-                    <h3>Storage overview</h3>
+                    <h3>
+                        Storage overview
+                    </h3>
                 </div>
 
                 <span
@@ -178,6 +176,7 @@
 
                     <div>
                         <span>Used</span>
+
                         <strong id="usedStorage">
                             0 GB
                         </strong>
@@ -185,6 +184,7 @@
 
                     <div>
                         <span>Free</span>
+
                         <strong id="freeStorage">
                             0 GB
                         </strong>
@@ -192,12 +192,14 @@
 
                     <div>
                         <span>Restore Safety</span>
+
                         <strong id="restoreSafety">
                             0 MB
                         </strong>
                     </div>
 
                 </div>
+
 
                 <div class="progress-track">
 
@@ -213,18 +215,19 @@
         </section>
 
 
-        <!-- File table -->
-
         <section class="files-section">
 
             <div class="section-heading">
 
                 <div>
+
                     <span class="eyebrow">
                         FILES
                     </span>
 
-                    <h3>File activity</h3>
+                    <h3>
+                        File activity
+                    </h3>
 
                 </div>
 
@@ -284,18 +287,20 @@
         </section>
 
 
-        <!-- Restore safety -->
-
         <section class="restore-section">
 
             <div class="section-heading">
 
                 <div>
+
                     <span class="eyebrow">
                         RESTORATION
                     </span>
 
-                    <h3>Restore safety</h3>
+                    <h3>
+                        Restore safety
+                    </h3>
+
                 </div>
 
             </div>
@@ -343,8 +348,6 @@
         </section>
 
 
-        <!-- Information -->
-
         <section class="info-section">
 
             <div class="info-card">
@@ -374,6 +377,123 @@
             </div>
 
         </section>
+
+
+        <!-- Restore Modal -->
+
+        <div
+            id="restoreModal"
+            class="modal hidden">
+
+            <div class="modal-box">
+
+                <button
+                    id="closeRestore"
+                    class="close-btn">
+                    ×
+                </button>
+
+                <span class="eyebrow">
+                    RESTORE FILE
+                </span>
+
+                <h3 id="restoreFileName">
+                    Restore file
+                </h3>
+
+                <p id="restoreDescription">
+                    Choose where you want to restore this file.
+                </p>
+
+
+                <div class="restore-details">
+
+                    <div>
+
+                        <span>
+                            Original path
+                        </span>
+
+                        <strong id="restoreOriginalPath">
+                            -
+                        </strong>
+
+                    </div>
+
+
+                    <div>
+
+                        <span>
+                            Required space
+                        </span>
+
+                        <strong id="restoreRequiredSpace">
+                            -
+                        </strong>
+
+                    </div>
+
+
+                    <div>
+
+                        <span>
+                            Current free space
+                        </span>
+
+                        <strong id="restoreAvailableSpace">
+                            -
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <div
+                    id="restoreWarningModal"
+                    class="restore-modal-warning hidden">
+                </div>
+
+
+                <div class="destination-section">
+
+                    <label for="restoreLocation">
+                        Restoration location
+                    </label>
+
+                    <input
+                        type="text"
+                        id="restoreLocation"
+                        placeholder="/Users/yourname/Documents">
+
+                    <p class="input-help">
+                        Use the original folder when it is
+                        available, or choose another folder
+                        when it is not.
+                    </p>
+
+                </div>
+
+
+                <div class="modal-actions">
+
+                    <button
+                        id="cancelRestore"
+                        class="secondary-btn">
+                        Cancel
+                    </button>
+
+                    <button
+                        id="confirmRestore"
+                        class="primary-btn">
+                        Restore File
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
 
     </main>
 
