@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -155,6 +156,7 @@ bool loadArchiveMetadata(
 
         metadata.archivedAt =
             std::stoll(archivedAt);
+
     }
     catch (...) {
         return false;
@@ -215,8 +217,6 @@ bool createArchive(
         originalName +
         ".gz";
 
-    // compressFile also checks whether
-    // the source changed during compression.
     if (!compressFile(
             inputPath,
             compressedPath
@@ -250,9 +250,16 @@ bool createArchive(
         );
 
     double percentage =
-        (saved /
-         static_cast<double>(originalSize))
-        * 100.0;
+        0.0;
+
+    if (originalSize != 0) {
+
+        percentage =
+            (saved /
+             static_cast<double>(
+                 originalSize
+             )) * 100.0;
+    }
 
     metadata.archiveId =
         archiveId;
@@ -305,4 +312,162 @@ bool createArchive(
     }
 
     return true;
+}
+
+
+/*
+ * Read all valid archive metadata files.
+ */
+std::vector<ArchiveMetadata> getAllArchives(
+    const std::string& archiveRoot
+)
+{
+    std::vector<ArchiveMetadata> archives;
+
+    std::string metadataFolder =
+        archiveRoot + "/metadata";
+
+    if (!fs::exists(metadataFolder) ||
+        !fs::is_directory(metadataFolder)) {
+
+        return archives;
+    }
+
+    std::error_code error;
+
+    for (
+        fs::directory_iterator it(
+            metadataFolder,
+            error
+        );
+        it != fs::directory_iterator();
+        it.increment(error)
+    ) {
+
+        if (error) {
+            break;
+        }
+
+        const fs::directory_entry& entry = *it;
+
+        std::error_code entryError;
+
+        if (!entry.is_regular_file(entryError)) {
+            continue;
+        }
+
+        if (entry.path().extension() != ".meta") {
+            continue;
+        }
+
+        ArchiveMetadata metadata;
+
+        if (loadArchiveMetadata(
+                entry.path().string(),
+                metadata
+            )) {
+
+            archives.push_back(
+                metadata
+            );
+        }
+    }
+
+    std::sort(
+        archives.begin(),
+        archives.end(),
+        [](const ArchiveMetadata& a,
+           const ArchiveMetadata& b) {
+
+            return a.archivedAt >
+                   b.archivedAt;
+        }
+    );
+
+    return archives;
+}
+
+
+bool findArchiveById(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveMetadata& metadata
+)
+{
+    std::string metadataPath =
+        archiveRoot +
+        "/metadata/" +
+        archiveId +
+        ".meta";
+
+    return loadArchiveMetadata(
+        metadataPath,
+        metadata
+    );
+}
+
+
+std::uintmax_t getTotalOriginalSize(
+    const std::string& archiveRoot
+)
+{
+    std::uintmax_t total = 0;
+
+    std::vector<ArchiveMetadata> archives =
+        getAllArchives(
+            archiveRoot
+        );
+
+    for (
+        const ArchiveMetadata& archive :
+        archives
+    ) {
+        total += archive.originalSize;
+    }
+
+    return total;
+}
+
+
+std::uintmax_t getTotalCompressedSize(
+    const std::string& archiveRoot
+)
+{
+    std::uintmax_t total = 0;
+
+    std::vector<ArchiveMetadata> archives =
+        getAllArchives(
+            archiveRoot
+        );
+
+    for (
+        const ArchiveMetadata& archive :
+        archives
+    ) {
+        total += archive.compressedSize;
+    }
+
+    return total;
+}
+
+
+std::uintmax_t getTotalSpaceSaved(
+    const std::string& archiveRoot
+)
+{
+    std::uintmax_t original =
+        getTotalOriginalSize(
+            archiveRoot
+        );
+
+    std::uintmax_t compressed =
+        getTotalCompressedSize(
+            archiveRoot
+        );
+
+    if (original <= compressed) {
+        return 0;
+    }
+
+    return original - compressed;
 }

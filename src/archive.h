@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct ArchiveMetadata {
     std::string archiveId;
@@ -33,6 +34,31 @@ bool saveArchiveMetadata(
 bool loadArchiveMetadata(
     const std::string& metadataPath,
     ArchiveMetadata& metadata
+);
+
+
+/* Archive catalog functions */
+
+std::vector<ArchiveMetadata> getAllArchives(
+    const std::string& archiveRoot
+);
+
+bool findArchiveById(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveMetadata& metadata
+);
+
+std::uintmax_t getTotalOriginalSize(
+    const std::string& archiveRoot
+);
+
+std::uintmax_t getTotalCompressedSize(
+    const std::string& archiveRoot
+);
+
+std::uintmax_t getTotalSpaceSaved(
+    const std::string& archiveRoot
 );
 
 #endif
