@@ -1,0 +1,38 @@
+#ifndef VAULT_SERVICE_H
+#define VAULT_SERVICE_H
+
+#include "archive.h"
+
+#include <cstdint>
+#include <string>
+
+struct VaultSummary {
+    std::size_t archiveCount;
+
+    std::uintmax_t originalSize;
+    std::uintmax_t compressedSize;
+    std::uintmax_t spaceSaved;
+
+    std::uintmax_t restoreSafetySpace;
+    std::uintmax_t freeSpace;
+};
+
+bool processCandidate(
+    const std::string& filePath,
+    const std::string& archiveRoot,
+    ArchiveMetadata& metadata
+);
+
+bool restoreFromArchive(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    const std::string& destinationDirectory,
+    std::string& restoredPath
+);
+
+bool getVaultSummary(
+    const std::string& archiveRoot,
+    VaultSummary& summary
+);
+
+#endif
