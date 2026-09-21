@@ -1,602 +1,315 @@
+const dashboardData = {
+    totalFiles: 1284,
+    inactiveFiles: 137,
+    archivedFiles: 42,
+    spaceSaved: "2.84 GB"
+};
+
 const files = [
     {
         name: "notes.txt",
-        type: "TXT",
-        size: "2.4 MB",
-        lastActivity: "94 days ago",
-        status: "inactive",
-        reason: "Candidate for compression"
+        size: "245 KB",
+        activity: "45 days ago",
+        status: "inactive"
     },
-
     {
         name: "project.cpp",
-        type: "CPP",
-        size: "18 KB",
-        lastActivity: "103 days ago",
-        status: "inactive",
-        reason: "Candidate for compression"
+        size: "72 KB",
+        activity: "38 days ago",
+        status: "inactive"
     },
-
     {
         name: "college_work.pdf",
-        type: "PDF",
-        size: "12 MB",
-        lastActivity: "110 days ago",
-        status: "archived",
-        reason: "Compressed and stored",
-        requiredSpace: "12 MB"
+        size: "18 MB",
+        activity: "82 days ago",
+        status: "archived"
     },
-
     {
         name: "photo.jpg",
-        type: "JPG",
-        size: "4.8 MB",
-        lastActivity: "120 days ago",
-        status: "skipped",
-        reason: "Already compressed format"
+        size: "3.2 MB",
+        activity: "60 days ago",
+        status: "skipped"
     },
-
     {
         name: "lecture.mp4",
-        type: "MP4",
-        size: "840 MB",
-        lastActivity: "150 days ago",
-        status: "skipped",
-        reason: "Already compressed media"
+        size: "540 MB",
+        activity: "75 days ago",
+        status: "skipped"
     },
-
     {
         name: "current_notes.txt",
-        type: "TXT",
-        size: "1.1 MB",
-        lastActivity: "2 days ago",
-        status: "active",
-        reason: "Recently modified"
+        size: "120 KB",
+        activity: "2 days ago",
+        status: "active"
+    }
+];
+
+const archivedFiles = [
+    {
+        name: "college_work.pdf",
+        size: "18 MB",
+        originalPath: "/Documents/college_work.pdf",
+        requiredSpace: "18 MB",
+        freeSpace: "28 GB"
+    },
+    {
+        name: "old_project.cpp",
+        size: "2.4 MB",
+        originalPath: "/Projects/old_project.cpp",
+        requiredSpace: "2.4 MB",
+        freeSpace: "28 GB"
     }
 ];
 
 
-const dashboardData = {
+function showSection(sectionId)
+{
+    const sections = document.querySelectorAll(".section");
 
-    totalFiles: 1284,
+    sections.forEach(section => {
+        section.classList.remove("active-section");
+    });
 
-    inactiveFiles: 137,
+    document.getElementById(sectionId).classList.add("active-section");
 
-    archivedFiles: 42,
+    const titles = {
+        dashboard: "Dashboard",
+        files: "Files",
+        restore: "Restore",
+        settings: "Settings"
+    };
 
-    spaceSaved: 2.84,
+    document.getElementById("pageTitle").textContent =
+        titles[sectionId];
 
-    usedStorage: 72,
+    const navItems = document.querySelectorAll(".nav-item");
 
-    freeStorage: 28,
+    navItems.forEach(item => {
+        item.classList.remove("active");
+    });
 
-    restoreSafety: 850
-};
-
-
-const fileTable =
-    document.getElementById("fileTable");
-
-const filterSelect =
-    document.getElementById("filterSelect");
-
-const inactivityDays =
-    document.getElementById("inactivityDays");
+    navItems.forEach(item => {
+        if (item.textContent.trim().toLowerCase() === sectionId) {
+            item.classList.add("active");
+        }
+    });
+}
 
 
-function showStats() {
-
-    document.getElementById("totalFiles")
-        .textContent =
+function updateDashboard()
+{
+    document.getElementById("totalFiles").textContent =
         dashboardData.totalFiles;
 
-    document.getElementById("inactiveFiles")
-        .textContent =
+    document.getElementById("inactiveFiles").textContent =
         dashboardData.inactiveFiles;
 
-    document.getElementById("archivedFiles")
-        .textContent =
+    document.getElementById("archivedFiles").textContent =
         dashboardData.archivedFiles;
 
-    document.getElementById("spaceSaved")
-        .textContent =
-        dashboardData.spaceSaved + " GB";
+    document.getElementById("spaceSaved").textContent =
+        dashboardData.spaceSaved;
+}
 
 
-    document.getElementById("usedStorage")
-        .textContent =
-        dashboardData.usedStorage + " GB";
+function getStatusText(status)
+{
+    const names = {
+        active: "Active",
+        inactive: "Inactive",
+        archived: "Archived",
+        skipped: "Skipped"
+    };
 
-    document.getElementById("freeStorage")
-        .textContent =
-        dashboardData.freeStorage + " GB";
-
-    document.getElementById("restoreSafety")
-        .textContent =
-        dashboardData.restoreSafety + " MB";
-
-    document.getElementById("restoreFreeSpace")
-        .textContent =
-        dashboardData.freeStorage + " GB";
-
-    document.getElementById("restoreRequirement")
-        .textContent =
-        dashboardData.restoreSafety + " MB";
+    return names[status] || status;
+}
 
 
-    const totalStorage =
-        dashboardData.usedStorage +
-        dashboardData.freeStorage;
+function createFileRow(file)
+{
+    let button = "";
 
-    const usedPercent =
-        (dashboardData.usedStorage /
-            totalStorage) * 100;
-
-    document.getElementById("storageBar")
-        .style.width =
-        usedPercent + "%";
-
-
-    const freeMB =
-        dashboardData.freeStorage * 1024;
-
-    const warning =
-        document.getElementById(
-            "restoreWarning"
-        );
-
-
-    if (
-        freeMB <
-        dashboardData.restoreSafety
-    ) {
-
-        warning.textContent =
-            "Warning: some archived files may " +
-            "not have enough space to restore.";
-
-        warning.classList.add(
-            "warning"
-        );
-
+    if (file.status === "archived") {
+        button =
+            `<button class="action-button"
+                onclick="openRestoreModal('${file.name}')">
+                Restore
+            </button>`;
     }
     else {
-
-        warning.textContent =
-            "Current storage is sufficient " +
-            "for the current archive set.";
-
-        warning.classList.remove(
-            "warning"
-        );
-    }
-}
-
-
-function createStatus(status) {
-
-    const span =
-        document.createElement("span");
-
-    span.className =
-        "status " + status;
-
-
-    if (status === "active") {
-        span.textContent = "Active";
-    }
-    else if (status === "inactive") {
-        span.textContent = "Inactive";
-    }
-    else if (status === "archived") {
-        span.textContent = "Archived";
-    }
-    else {
-        span.textContent = "Skipped";
+        button = `<button class="action-button">View</button>`;
     }
 
-
-    return span;
-}
-
-
-function getAction(status) {
-
-    if (status === "inactive") {
-        return "Review";
-    }
-
-    if (status === "archived") {
-        return "Restore";
-    }
-
-    if (status === "skipped") {
-        return "Details";
-    }
-
-    return "View";
-}
-
-
-function createRow(file) {
-
-    const row =
-        document.createElement("tr");
-
-
-    row.innerHTML = `
-        <td>${file.name}</td>
-        <td>${file.type}</td>
-        <td>${file.size}</td>
-        <td>${file.lastActivity}</td>
+    return `
+        <tr>
+            <td><strong>${file.name}</strong></td>
+            <td>${file.size}</td>
+            <td>${file.activity}</td>
+            <td>
+                <span class="status status-${file.status}">
+                    ${getStatusText(file.status)}
+                </span>
+            </td>
+            <td>${button}</td>
+        </tr>
     `;
-
-
-    const statusCell =
-        document.createElement("td");
-
-    statusCell.appendChild(
-        createStatus(file.status)
-    );
-
-    row.appendChild(statusCell);
-
-
-    const reasonCell =
-        document.createElement("td");
-
-    reasonCell.textContent =
-        file.reason;
-
-    row.appendChild(reasonCell);
-
-
-    const actionCell =
-        document.createElement("td");
-
-    const button =
-        document.createElement("button");
-
-    button.className =
-        "action-btn";
-
-    button.textContent =
-        getAction(file.status);
-
-
-    button.addEventListener(
-        "click",
-        function () {
-
-            if (
-                file.status === "archived"
-            ) {
-
-                openRestoreModal(file);
-
-            }
-            else {
-
-                showFileMessage(file);
-
-            }
-
-        }
-    );
-
-
-    actionCell.appendChild(button);
-
-    row.appendChild(actionCell);
-
-
-    return row;
 }
 
 
-function showFiles(filter = "all") {
+function displayFiles(fileList = files)
+{
+    const table = document.getElementById("fileTable");
 
-    fileTable.innerHTML = "";
+    table.innerHTML = "";
 
-    let visibleFiles = files;
-
-
-    if (filter !== "all") {
-
-        visibleFiles =
-            files.filter(
-                file =>
-                    file.status === filter
-            );
-
-    }
-
-
-    visibleFiles.forEach(
-        file => {
-
-            fileTable.appendChild(
-                createRow(file)
-            );
-
-        }
-    );
+    fileList.forEach(file => {
+        table.innerHTML += createFileRow(file);
+    });
 }
 
 
-function showFileMessage(file) {
+function filterFiles()
+{
+    const filter = document.getElementById("fileFilter").value;
 
-    alert(
-        file.name +
-        "\n\nStatus: " +
-        file.status +
-        "\nReason: " +
-        file.reason
-    );
-}
-
-
-function openRestoreModal(file) {
-
-    const modal =
-        document.getElementById(
-            "restoreModal"
-        );
-
-    const fileName =
-        document.getElementById(
-            "restoreFileName"
-        );
-
-    const originalPath =
-        document.getElementById(
-            "restoreOriginalPath"
-        );
-
-    const requiredSpace =
-        document.getElementById(
-            "restoreRequiredSpace"
-        );
-
-    const availableSpace =
-        document.getElementById(
-            "restoreAvailableSpace"
-        );
-
-    const description =
-        document.getElementById(
-            "restoreDescription"
-        );
-
-    const warning =
-        document.getElementById(
-            "restoreWarningModal"
-        );
-
-    const location =
-        document.getElementById(
-            "restoreLocation"
-        );
-
-
-    fileName.textContent =
-        "Restore " + file.name;
-
-
-    originalPath.textContent =
-        "/Users/user/Documents/" +
-        file.name;
-
-
-    requiredSpace.textContent =
-        file.requiredSpace || "150 MB";
-
-
-    availableSpace.textContent =
-        dashboardData.freeStorage +
-        " GB";
-
-
-    description.textContent =
-        "SmartFileVault will try to restore " +
-        "the file to its original location.";
-
-
-    warning.classList.add(
-        "hidden"
-    );
-
-
-    location.value =
-        "/Users/user/Documents";
-
-
-    modal.dataset.fileName =
-        file.name;
-
-
-    modal.classList.remove(
-        "hidden"
-    );
-}
-
-
-function closeRestoreModal() {
-
-    document.getElementById(
-        "restoreModal"
-    ).classList.add(
-        "hidden"
-    );
-}
-
-
-function confirmRestore() {
-
-    const modal =
-        document.getElementById(
-            "restoreModal"
-        );
-
-    const fileName =
-        modal.dataset.fileName;
-
-    const location =
-        document.getElementById(
-            "restoreLocation"
-        ).value.trim();
-
-    const warning =
-        document.getElementById(
-            "restoreWarningModal"
-        );
-
-
-    if (location === "") {
-
-        warning.textContent =
-            "Please enter a restoration location.";
-
-        warning.classList.remove(
-            "hidden"
-        );
-
+    if (filter === "all") {
+        displayFiles(files);
         return;
     }
 
+    const filtered = files.filter(file => {
+        return file.status === filter;
+    });
 
-    /*
-     * Frontend prototype only.
-     * The real C++ restoration function
-     * will be connected later.
-     */
-    warning.textContent =
+    displayFiles(filtered);
+}
+
+
+function displayRestoreFiles()
+{
+    const container = document.getElementById("restoreList");
+
+    container.innerHTML = "";
+
+    archivedFiles.forEach(file => {
+
+        container.innerHTML += `
+            <div class="restore-item">
+                <div>
+                    <strong>${file.name}</strong>
+                    <span>${file.size} • ${file.originalPath}</span>
+                </div>
+
+                <button
+                    class="action-button"
+                    onclick="openRestoreModal('${file.name}')">
+                    Restore
+                </button>
+            </div>
+        `;
+    });
+}
+
+
+function openRestoreModal(fileName)
+{
+    const file = archivedFiles.find(item => {
+        return item.name === fileName;
+    });
+
+    if (!file) {
+        return;
+    }
+
+    document.getElementById("modalFileName").textContent =
+        file.name;
+
+    document.getElementById("modalOriginalPath").textContent =
+        file.originalPath;
+
+    document.getElementById("modalRequiredSpace").textContent =
+        file.requiredSpace;
+
+    document.getElementById("modalFreeSpace").textContent =
+        file.freeSpace;
+
+    document.getElementById("restoreDestination").value = "";
+
+    document.getElementById("restoreModal")
+        .classList.add("show");
+}
+
+
+function closeRestoreModal()
+{
+    document.getElementById("restoreModal")
+        .classList.remove("show");
+}
+
+
+function confirmRestore()
+{
+    const fileName =
+        document.getElementById("modalFileName").textContent;
+
+    const destination =
+        document.getElementById("restoreDestination").value.trim();
+
+    if (destination === "") {
+        alert("Please enter a restore destination.");
+        return;
+    }
+
+    alert(
+        "Restore request prepared for " +
         fileName +
-        " will be restored to:\n" +
-        location;
-
-    warning.classList.remove(
-        "hidden"
+        "\nDestination: " +
+        destination +
+        "\n\nBackend connection will perform the real restore."
     );
+
+    closeRestoreModal();
 }
 
 
-function startScan() {
+function startScan()
+{
+    const button = document.querySelector(".scan-button");
 
-    const storageStatus =
-        document.getElementById(
-            "storageStatus"
+    button.textContent = "Scanning...";
+    button.disabled = true;
+
+    setTimeout(() => {
+
+        button.textContent = "Scan Files";
+        button.disabled = false;
+
+        alert(
+            "Demo scan completed.\n\n" +
+            "Real scanning will be connected to the C++ backend."
         );
 
-    const scanStatus =
-        document.getElementById(
-            "scanStatus"
-        );
-
-    const selectedDays =
-        inactivityDays.value;
-
-
-    storageStatus.textContent =
-        "Scanning...";
-
-
-    scanStatus.textContent =
-        "Scanning using " +
-        selectedDays +
-        "-day threshold...";
-
-
-    setTimeout(
-        function () {
-
-            storageStatus.textContent =
-                "Scan complete";
-
-            scanStatus.textContent =
-                "Scan complete · " +
-                selectedDays +
-                "-day threshold";
-
-            showStats();
-
-            showFiles();
-
-        },
-        800
-    );
+    }, 1200);
 }
 
 
-filterSelect.addEventListener(
-    "change",
-    function () {
+function saveSettings()
+{
+    const days =
+        document.getElementById("inactiveDays").value;
 
-        showFiles(
-            this.value
-        );
+    const message =
+        document.getElementById("settingsMessage");
 
-    }
-);
-
-
-inactivityDays.addEventListener(
-    "change",
-    function () {
-
-        const scanStatus =
-            document.getElementById(
-                "scanStatus"
-            );
-
-        scanStatus.textContent =
-            "Threshold changed to " +
-            this.value +
-            " days";
-    }
-);
+    message.textContent =
+        "Inactivity period saved: " + days + " days.";
+}
 
 
-document.getElementById(
-    "scanBtn"
-).addEventListener(
-    "click",
-    startScan
-);
+document.addEventListener("DOMContentLoaded", () => {
 
+    updateDashboard();
+    displayFiles();
+    displayRestoreFiles();
 
-document.getElementById(
-    "heroScanBtn"
-).addEventListener(
-    "click",
-    startScan
-);
-
-
-document.getElementById(
-    "closeRestore"
-).addEventListener(
-    "click",
-    closeRestoreModal
-);
-
-
-document.getElementById(
-    "cancelRestore"
-).addEventListener(
-    "click",
-    closeRestoreModal
-);
-
-
-document.getElementById(
-    "confirmRestore"
-).addEventListener(
-    "click",
-    confirmRestore
-);
-
-
-showStats();
-
-showFiles();
+});
