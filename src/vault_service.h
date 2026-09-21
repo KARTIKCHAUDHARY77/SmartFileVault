@@ -2,9 +2,11 @@
 #define VAULT_SERVICE_H
 
 #include "archive.h"
+#include "inactivity.h"
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct VaultSummary {
     std::size_t archiveCount;
@@ -17,10 +19,25 @@ struct VaultSummary {
     std::uintmax_t freeSpace;
 };
 
+struct ProcessResult {
+    int totalFiles;
+    int inactiveFiles;
+    int archivedFiles;
+    int skippedFiles;
+
+    std::uintmax_t spaceSaved;
+};
+
 bool processCandidate(
     const std::string& filePath,
     const std::string& archiveRoot,
     ArchiveMetadata& metadata
+);
+
+bool processInactiveFiles(
+    const std::vector<FileMetadata>& files,
+    const std::string& archiveRoot,
+    ProcessResult& result
 );
 
 bool restoreFromArchive(

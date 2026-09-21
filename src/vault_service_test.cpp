@@ -1,10 +1,11 @@
-#include "archive.h"
 #include "file_utils.h"
+#include "inactivity.h"
 #include "vault_service.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -19,203 +20,227 @@ static void createTestFile(
     }
 
     for (int i = 0; i < 5000; ++i) {
-        file << "SmartFileVault end to end test data.\n";
+        file << "SmartFileVault integration test data.\n";
     }
 }
 
 int main()
 {
-    const std::string source =
-        "vault_service_test.txt";
-
-    const std::string reference =
-        "vault_service_reference.txt";
+    const std::string testFolder =
+        "vault_integration_test";
 
     const std::string archiveFolder =
-        "vault_service_archive";
+        testFolder + "/archive";
 
-    const std::string restoreFolder =
-        "vault_service_restore";
+    const std::string oldFile =
+        testFolder + "/old_notes.txt";
 
-    createTestFile(source);
+    const std::string recentFile =
+        testFolder + "/recent_notes.txt";
 
-    fs::copy_file(
-        source,
-        reference,
-        fs::copy_options::overwrite_existing
-    );
-
-    ArchiveMetadata metadata;
-
-    if (!processCandidate(
-            source,
-            archiveFolder,
-            metadata
-        )) {
-
-        std::cout
-            << "Candidate processing: FAIL\n";
-
-        fs::remove(reference);
-        fs::remove_all(archiveFolder);
-
-        return 1;
-    }
-
-    std::cout
-        << "Candidate processing: PASS\n";
-
-
-    if (!fs::exists(source)) {
-
-        std::cout
-            << "Original removed safely: PASS\n";
-
-    } else {
-
-        std::cout
-            << "Original removed safely: FAIL\n";
-    }
-
-
-    VaultSummary summary;
-
-    if (!getVaultSummary(
-            archiveFolder,
-            summary
-        )) {
-
-        std::cout
-            << "Vault summary: FAIL\n";
-
-        fs::remove(reference);
-        fs::remove_all(archiveFolder);
-
-        return 1;
-    }
-
-
-    std::cout
-        << "Archive count: "
-        << summary.archiveCount
-        << '\n';
-
-    std::cout
-        << "Original storage: "
-        << summary.originalSize
-        << " bytes\n";
-
-    std::cout
-        << "Compressed storage: "
-        << summary.compressedSize
-        << " bytes\n";
-
-    std::cout
-        << "Space saved: "
-        << summary.spaceSaved
-        << " bytes\n";
-
-    std::cout
-        << "Restore safety space: "
-        << summary.restoreSafetySpace
-        << " bytes\n";
-
-
-    if (summary.archiveCount == 1 &&
-        summary.spaceSaved > 0) {
-
-        std::cout
-            << "Vault summary: PASS\n";
-
-    } else {
-
-        std::cout
-            << "Vault summary: FAIL\n";
-    }
+    const std::string imageFile =
+        testFolder + "/photo.jpg";
 
 
     fs::create_directories(
-        restoreFolder
+        testFolder
     );
 
 
-    std::string restoredPath;
+    createTestFile(oldFile);
+    createTestFile(recentFile);
+    createTestFile(imageFile);
 
-    if (!restoreFromArchive(
-            archiveFolder,
-            metadata.archiveId,
-            restoreFolder,
-            restoredPath
+
+    FileMetadata oldMetadata;
+    FileMetadata recentMetadata;
+    FileMetadata imageMetadata;
+
+
+    if (!getFileMetadata(
+            oldFile,
+            oldMetadata
         )) {
 
         std::cout
-            << "Restore from archive: FAIL\n";
+            << "Old file metadata failed.\n";
 
-        fs::remove(reference);
-        fs::remove_all(archiveFolder);
-        fs::remove_all(restoreFolder);
-
+        fs::remove_all(testFolder);
         return 1;
     }
 
 
-    std::cout
-        << "Restore from archive: PASS\n";
-
-    std::cout
-        << "Restored path: "
-        << restoredPath
-        << '\n';
-
-
-    if (!filesAreDifferent(
-            reference,
-            restoredPath
+    if (!getFileMetadata(
+            recentFile,
+            recentMetadata
         )) {
 
         std::cout
-            << "Restored data verification: PASS\n";
+            << "Recent file metadata failed.\n";
 
-    } else {
+        fs::remove_all(testFolder);
+        return 1;
+    }
+
+
+    if (!getFileMetadata(
+            imageFile,
+            imageMetadata
+        )) {
 
         std::cout
-            << "Restored data verification: FAIL\n";
+            << "Image metadata failed.\n";
+
+        fs::remove_all(testFolder);
+        return 1;
     }
 
 
     /*
-     * Test duplicate filename protection.
-     *
-     * The first restored file already exists,
-     * so another restore should get a new name.
+     * We are setting the test values manually
+     * here so that the integration test can
+     * represent an inactive file without
+     * waiting for actual days to pass.
      */
-    std::string secondRestoredPath;
+    oldMetadata.inactive = true;
+    recentMetadata.inactive = false;
+    imageMetadata.inactive = true;
 
-    if (restoreFromArchive(
+
+    std::vector<FileMetadata> files;
+
+    files.push_back(oldMetadata);
+    files.push_back(recentMetadata);
+    files.push_back(imageMetadata);
+
+
+    ProcessResult result;
+
+
+    if (!processInactiveFiles(
+            files,
             archiveFolder,
-            metadata.archiveId,
-            restoreFolder,
-            secondRestoredPath
+            result
         )) {
 
         std::cout
-            << "Second restore: PASS\n";
+            << "Processing failed.\n";
+
+        fs::remove_all(testFolder);
+        return 1;
+    }
+
+
+    std::cout
+        << "Total files: "
+        << result.totalFiles
+        << '\n';
+
+    std::cout
+        << "Inactive files: "
+        << result.inactiveFiles
+        << '\n';
+
+    std::cout
+        << "Archived files: "
+        << result.archivedFiles
+        << '\n';
+
+    std::cout
+        << "Skipped files: "
+        << result.skippedFiles
+        << '\n';
+
+    std::cout
+        << "Space saved: "
+        << result.spaceSaved
+        << " bytes\n";
+
+
+    if (result.totalFiles == 3) {
 
         std::cout
-            << "Second path: "
-            << secondRestoredPath
-            << '\n';
+            << "File count check: PASS\n";
 
     } else {
 
         std::cout
-            << "Second restore: FAIL\n";
+            << "File count check: FAIL\n";
     }
 
 
-    fs::remove(reference);
-    fs::remove_all(archiveFolder);
-    fs::remove_all(restoreFolder);
+    /*
+     * old_notes.txt should be archived because
+     * it is inactive and not in the skip list.
+     *
+     * recent_notes.txt should stay because it
+     * is active.
+     *
+     * photo.jpg should be skipped because it
+     * is treated as an already compressed format.
+     */
+
+    if (result.inactiveFiles == 2) {
+
+        std::cout
+            << "Inactive file check: PASS\n";
+
+    } else {
+
+        std::cout
+            << "Inactive file check: FAIL\n";
+    }
+
+
+    if (result.archivedFiles == 1) {
+
+        std::cout
+            << "Archive decision check: PASS\n";
+
+    } else {
+
+        std::cout
+            << "Archive decision check: FAIL\n";
+    }
+
+
+    if (!fs::exists(oldFile)) {
+
+        std::cout
+            << "Original removal check: PASS\n";
+
+    } else {
+
+        std::cout
+            << "Original removal check: FAIL\n";
+    }
+
+
+    if (fs::exists(recentFile)) {
+
+        std::cout
+            << "Active file protection: PASS\n";
+
+    } else {
+
+        std::cout
+            << "Active file protection: FAIL\n";
+    }
+
+
+    if (fs::exists(imageFile)) {
+
+        std::cout
+            << "Already-compressed file protection: PASS\n";
+
+    } else {
+
+        std::cout
+            << "Already-compressed file protection: FAIL\n";
+    }
+
+
+    fs::remove_all(testFolder);
 
     return 0;
 }

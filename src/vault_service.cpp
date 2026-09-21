@@ -1,6 +1,7 @@
 #include "vault_service.h"
 
 #include "archive_service.h"
+#include "compression_policy.h"
 #include "restore.h"
 #include "restore_safety.h"
 
@@ -20,16 +21,77 @@ bool processCandidate(
         return false;
     }
 
-    /*
-     * This function assumes that the scanner and
-     * compression policy have already decided that
-     * this file is a valid compression candidate.
-     */
+    CompressionDecision decision =
+        getCompressionDecision(filePath);
+
+    if (decision != CompressionDecision::Compress) {
+        return false;
+    }
+
     return archiveAndRemoveOriginal(
         filePath,
         archiveRoot,
         metadata
     );
+}
+
+
+bool processInactiveFiles(
+    const std::vector<FileMetadata>& files,
+    const std::string& archiveRoot,
+    ProcessResult& result
+)
+{
+    result.totalFiles =
+        static_cast<int>(files.size());
+
+    result.inactiveFiles = 0;
+    result.archivedFiles = 0;
+    result.skippedFiles = 0;
+    result.spaceSaved = 0;
+
+    for (const FileMetadata& file : files) {
+
+        if (!file.inactive) {
+            continue;
+        }
+
+        result.inactiveFiles++;
+
+        CompressionDecision decision =
+            getCompressionDecision(
+                file.filePath
+            );
+
+        if (decision != CompressionDecision::Compress) {
+            result.skippedFiles++;
+            continue;
+        }
+
+        ArchiveMetadata metadata;
+
+        if (!archiveAndRemoveOriginal(
+                file.filePath,
+                archiveRoot,
+                metadata
+            )) {
+
+            result.skippedFiles++;
+            continue;
+        }
+
+        result.archivedFiles++;
+
+        if (metadata.originalSize >
+            metadata.compressedSize) {
+
+            result.spaceSaved +=
+                metadata.originalSize -
+                metadata.compressedSize;
+        }
+    }
+
+    return true;
 }
 
 
@@ -60,13 +122,6 @@ bool restoreFromArchive(
         return false;
     }
 
-    /*
-     * When destinationDirectory is empty,
-     * restoreArchive will try the original path.
-     *
-     * When the original path is missing,
-     * the caller can provide another directory.
-     */
     return restoreArchive(
         metadataPath,
         destinationDirectory,
