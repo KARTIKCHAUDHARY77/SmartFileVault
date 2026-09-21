@@ -1,30 +1,24 @@
 #ifndef INACTIVITY_H
 #define INACTIVITY_H
 
-#include <string>
 #include <cstdint>
-#include <filesystem>
+#include <string>
 
 struct FileMetadata {
     std::string fileName;
     std::string filePath;
     std::string extension;
 
-    std::uintmax_t fileSize;
-
-    std::filesystem::file_time_type lastModified;
+    std::uintmax_t size;
+    long long lastModified;
 
     bool inactive;
 };
 
-bool getFileMetadata(
-    const std::string& filePath,
-    FileMetadata& metadata
-);
+bool isFileInactive(const std::string& filePath, int inactiveDays);
 
-bool isFileInactive(
-    const FileMetadata& metadata,
-    int inactivityDays
-);
+bool getFileMetadata(const std::string& filePath,
+                     int inactiveDays,
+                     FileMetadata& metadata);
 
 #endif

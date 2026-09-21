@@ -11,10 +11,8 @@ struct FileScanResult {
     int skippedFiles;
 };
 
-bool scanDirectory(
-    const std::string& directoryPath,
-    int inactivityDays,
-    FileScanResult& result
-);
+bool scanDirectory(const std::string& directoryPath,
+                   int inactiveDays,
+                   FileScanResult& result);
 
 #endif

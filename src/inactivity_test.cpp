@@ -6,63 +6,41 @@
 
 namespace fs = std::filesystem;
 
-int main() {
+int main()
+{
+    std::string testFolder = "inactivity_test_folder";
 
-    const std::string testFile =
-        "old_test.txt";
+    fs::remove_all(testFolder);
+    fs::create_directories(testFolder);
 
-    {
-        std::ofstream file(testFile);
+    std::string filePath = testFolder + "/test.txt";
 
-        file << "SmartFileVault inactivity test";
-    }
+    std::ofstream file(filePath);
+    file << "This is a test file.";
+    file.close();
 
     FileMetadata metadata;
 
-    if (!getFileMetadata(
-            testFile,
-            metadata
-        )) {
+    if (getFileMetadata(filePath, 30, metadata)) {
+        std::cout << "File name: " << metadata.fileName << "\n";
+        std::cout << "File path: " << metadata.filePath << "\n";
+        std::cout << "Extension: " << metadata.extension << "\n";
+        std::cout << "File size: " << metadata.size << " bytes\n";
 
-        std::cout
-            << "Metadata collection failed.\n";
-
+        if (metadata.inactive) {
+            std::cout << "Inactive check: INACTIVE\n";
+        }
+        else {
+            std::cout << "Inactive check: ACTIVE\n";
+        }
+    }
+    else {
+        std::cout << "Failed to read file metadata.\n";
+        fs::remove_all(testFolder);
         return 1;
     }
 
-    std::cout
-        << "Name: "
-        << metadata.fileName
-        << '\n';
-
-    std::cout
-        << "Path: "
-        << metadata.filePath
-        << '\n';
-
-    std::cout
-        << "Extension: "
-        << metadata.extension
-        << '\n';
-
-    std::cout
-        << "Size: "
-        << metadata.fileSize
-        << " bytes\n";
-
-    std::cout
-        << "Inactive at 90 days: "
-        << (
-            isFileInactive(
-                metadata,
-                90
-            )
-                ? "YES"
-                : "NO"
-        )
-        << '\n';
-
-    fs::remove(testFile);
+    fs::remove_all(testFolder);
 
     return 0;
 }
