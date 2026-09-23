@@ -1,11 +1,11 @@
-const dashboardData = {
+const demoDashboard = {
     totalFiles: 1284,
     inactiveFiles: 137,
     archivedFiles: 42,
     spaceSaved: "2.84 GB"
 };
 
-const files = [
+const demoFiles = [
     {
         name: "notes.txt",
         size: "245 KB",
@@ -44,8 +44,9 @@ const files = [
     }
 ];
 
-const archivedFiles = [
+const demoArchives = [
     {
+        id: "SFV-DEMO-001",
         name: "college_work.pdf",
         size: "18 MB",
         originalPath: "/Documents/college_work.pdf",
@@ -53,6 +54,7 @@ const archivedFiles = [
         freeSpace: "28 GB"
     },
     {
+        id: "SFV-DEMO-002",
         name: "old_project.cpp",
         size: "2.4 MB",
         originalPath: "/Projects/old_project.cpp",
@@ -60,6 +62,61 @@ const archivedFiles = [
         freeSpace: "28 GB"
     }
 ];
+
+
+/*
+ * Backend interface
+ *
+ * These functions are kept separate so that the demo data
+ * can later be replaced by the real C++ backend.
+ */
+
+const backend = {
+
+    async scan(folderPath, inactiveDays) {
+
+        console.log("Backend scan request:", {
+            folderPath,
+            inactiveDays
+        });
+
+        // Real C++ backend connection will be added here.
+        return {
+            success: true,
+            demo: true,
+            message: "Demo scan completed."
+        };
+    },
+
+    async getDashboard() {
+
+        return demoDashboard;
+    },
+
+    async getFiles() {
+
+        return demoFiles;
+    },
+
+    async getArchives() {
+
+        return demoArchives;
+    },
+
+    async restore(archiveId, destination) {
+
+        console.log("Restore request:", {
+            archiveId,
+            destination
+        });
+
+        // Real C++ restore call will be added here.
+        return {
+            success: true,
+            demo: true
+        };
+    }
+};
 
 
 function showSection(sectionId)
@@ -70,7 +127,12 @@ function showSection(sectionId)
         section.classList.remove("active-section");
     });
 
-    document.getElementById(sectionId).classList.add("active-section");
+    const selectedSection =
+        document.getElementById(sectionId);
+
+    if (selectedSection) {
+        selectedSection.classList.add("active-section");
+    }
 
     const titles = {
         dashboard: "Dashboard",
@@ -86,9 +148,7 @@ function showSection(sectionId)
 
     navItems.forEach(item => {
         item.classList.remove("active");
-    });
 
-    navItems.forEach(item => {
         if (item.textContent.trim().toLowerCase() === sectionId) {
             item.classList.add("active");
         }
@@ -96,19 +156,21 @@ function showSection(sectionId)
 }
 
 
-function updateDashboard()
+async function updateDashboard()
 {
+    const data = await backend.getDashboard();
+
     document.getElementById("totalFiles").textContent =
-        dashboardData.totalFiles;
+        data.totalFiles;
 
     document.getElementById("inactiveFiles").textContent =
-        dashboardData.inactiveFiles;
+        data.inactiveFiles;
 
     document.getElementById("archivedFiles").textContent =
-        dashboardData.archivedFiles;
+        data.archivedFiles;
 
     document.getElementById("spaceSaved").textContent =
-        dashboardData.spaceSaved;
+        data.spaceSaved;
 }
 
 
@@ -127,38 +189,57 @@ function getStatusText(status)
 
 function createFileRow(file)
 {
-    let button = "";
+    let action = "";
 
     if (file.status === "archived") {
-        button =
-            `<button class="action-button"
+
+        action = `
+            <button
+                class="action-button"
                 onclick="openRestoreModal('${file.name}')">
                 Restore
-            </button>`;
+            </button>
+        `;
     }
     else {
-        button = `<button class="action-button">View</button>`;
+
+        action = `
+            <button class="action-button">
+                View
+            </button>
+        `;
     }
 
     return `
         <tr>
             <td><strong>${file.name}</strong></td>
+
             <td>${file.size}</td>
+
             <td>${file.activity}</td>
+
             <td>
                 <span class="status status-${file.status}">
                     ${getStatusText(file.status)}
                 </span>
             </td>
-            <td>${button}</td>
+
+            <td>
+                ${action}
+            </td>
         </tr>
     `;
 }
 
 
-function displayFiles(fileList = files)
+async function displayFiles(fileList = null)
 {
-    const table = document.getElementById("fileTable");
+    if (!fileList) {
+        fileList = await backend.getFiles();
+    }
+
+    const table =
+        document.getElementById("fileTable");
 
     table.innerHTML = "";
 
@@ -168,36 +249,47 @@ function displayFiles(fileList = files)
 }
 
 
-function filterFiles()
+async function filterFiles()
 {
-    const filter = document.getElementById("fileFilter").value;
+    const filter =
+        document.getElementById("fileFilter").value;
+
+    const files =
+        await backend.getFiles();
 
     if (filter === "all") {
         displayFiles(files);
         return;
     }
 
-    const filtered = files.filter(file => {
-        return file.status === filter;
-    });
+    const filtered =
+        files.filter(file => file.status === filter);
 
     displayFiles(filtered);
 }
 
 
-function displayRestoreFiles()
+async function displayRestoreFiles()
 {
-    const container = document.getElementById("restoreList");
+    const archives =
+        await backend.getArchives();
+
+    const container =
+        document.getElementById("restoreList");
 
     container.innerHTML = "";
 
-    archivedFiles.forEach(file => {
+    archives.forEach(file => {
 
         container.innerHTML += `
             <div class="restore-item">
+
                 <div>
                     <strong>${file.name}</strong>
-                    <span>${file.size} • ${file.originalPath}</span>
+
+                    <span>
+                        ${file.size} • ${file.originalPath}
+                    </span>
                 </div>
 
                 <button
@@ -205,17 +297,20 @@ function displayRestoreFiles()
                     onclick="openRestoreModal('${file.name}')">
                     Restore
                 </button>
+
             </div>
         `;
     });
 }
 
 
-function openRestoreModal(fileName)
+async function openRestoreModal(fileName)
 {
-    const file = archivedFiles.find(item => {
-        return item.name === fileName;
-    });
+    const archives =
+        await backend.getArchives();
+
+    const file =
+        archives.find(item => item.name === fileName);
 
     if (!file) {
         return;
@@ -247,7 +342,7 @@ function closeRestoreModal()
 }
 
 
-function confirmRestore()
+async function confirmRestore()
 {
     const fileName =
         document.getElementById("modalFileName").textContent;
@@ -260,36 +355,74 @@ function confirmRestore()
         return;
     }
 
-    alert(
-        "Restore request prepared for " +
-        fileName +
-        "\nDestination: " +
-        destination +
-        "\n\nBackend connection will perform the real restore."
-    );
+    const archives =
+        await backend.getArchives();
 
-    closeRestoreModal();
+    const file =
+        archives.find(item => item.name === fileName);
+
+    if (!file) {
+        alert("Archive not found.");
+        return;
+    }
+
+    const result =
+        await backend.restore(file.id, destination);
+
+    if (result.success) {
+
+        alert(
+            "Restore request completed for " +
+            fileName
+        );
+
+        closeRestoreModal();
+    }
+    else {
+        alert("Restore failed.");
+    }
 }
 
 
-function startScan()
+async function startScan()
 {
-    const button = document.querySelector(".scan-button");
+    const button =
+        document.querySelector(".scan-button");
+
+    const folderPath =
+        prompt("Enter folder path to scan:");
+
+    if (!folderPath) {
+        return;
+    }
+
+    const days =
+        document.getElementById("inactiveDays")?.value || 30;
 
     button.textContent = "Scanning...";
     button.disabled = true;
 
-    setTimeout(() => {
+    const result =
+        await backend.scan(folderPath, Number(days));
 
-        button.textContent = "Scan Files";
-        button.disabled = false;
+    button.textContent = "Scan Files";
+    button.disabled = false;
+
+    if (result.success) {
 
         alert(
-            "Demo scan completed.\n\n" +
-            "Real scanning will be connected to the C++ backend."
+            result.demo
+                ? "Demo scan completed. Real backend connection is pending."
+                : "Scan completed successfully."
         );
 
-    }, 1200);
+        await updateDashboard();
+        await displayFiles();
+        await displayRestoreFiles();
+    }
+    else {
+        alert("Scan failed.");
+    }
 }
 
 
@@ -306,10 +439,10 @@ function saveSettings()
 }
 
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
 
-    updateDashboard();
-    displayFiles();
-    displayRestoreFiles();
+    await updateDashboard();
+    await displayFiles();
+    await displayRestoreFiles();
 
 });
