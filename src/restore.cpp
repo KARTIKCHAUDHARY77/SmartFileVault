@@ -1,40 +1,37 @@
 #include "restore.h"
 
 #include "compression.h"
+#include "file_utils.h"
 #include "restore_safety.h"
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 
 namespace fs = std::filesystem;
 
-static std::string getSafeFileName(
+static fs::path getSafeFilePath(
     const fs::path& directory,
-    const std::string& originalName
-)
+    const std::string& originalName)
 {
-    fs::path originalPath =
-        directory / originalName;
+    fs::path originalPath = directory / originalName;
 
     if (!fs::exists(originalPath)) {
-        return originalPath.string();
+        return originalPath;
     }
 
-    fs::path name(originalName);
+    fs::path namePath(originalName);
 
-    std::string stem =
-        name.stem().string();
+    std::string stem = namePath.stem().string();
+    std::string extension = namePath.extension().string();
 
-    std::string extension =
-        name.extension().string();
-
-    int number = 1;
+    int counter = 1;
 
     while (true) {
 
         std::string newName =
             stem + " (" +
-            std::to_string(number) +
+            std::to_string(counter) +
             ")" +
             extension;
 
@@ -42,104 +39,128 @@ static std::string getSafeFileName(
             directory / newName;
 
         if (!fs::exists(newPath)) {
-            return newPath.string();
+            return newPath;
         }
 
-        number++;
+        counter++;
     }
 }
 
 static bool filesMatch(
     const std::string& firstPath,
-    const std::string& secondPath
-)
+    const std::string& secondPath)
 {
-    if (!fs::exists(firstPath) ||
-        !fs::exists(secondPath)) {
+    try {
 
-        return false;
-    }
-
-    if (fs::file_size(firstPath) !=
-        fs::file_size(secondPath)) {
-
-        return false;
-    }
-
-    std::ifstream first(
-        firstPath,
-        std::ios::binary
-    );
-
-    std::ifstream second(
-        secondPath,
-        std::ios::binary
-    );
-
-    if (!first || !second) {
-        return false;
-    }
-
-    char firstBuffer[8192];
-    char secondBuffer[8192];
-
-    while (first && second) {
-
-        first.read(
-            firstBuffer,
-            sizeof(firstBuffer)
-        );
-
-        second.read(
-            secondBuffer,
-            sizeof(secondBuffer)
-        );
-
-        std::streamsize firstCount =
-            first.gcount();
-
-        std::streamsize secondCount =
-            second.gcount();
-
-        if (firstCount != secondCount) {
+        if (!fs::exists(firstPath) ||
+            !fs::exists(secondPath)) {
             return false;
         }
 
-        for (
-            std::streamsize i = 0;
-            i < firstCount;
-            i++
-        ) {
-            if (firstBuffer[i] !=
-                secondBuffer[i]) {
+        if (fs::file_size(firstPath) !=
+            fs::file_size(secondPath)) {
+            return false;
+        }
 
+        std::ifstream first(
+            firstPath,
+            std::ios::binary
+        );
+
+        std::ifstream second(
+            secondPath,
+            std::ios::binary
+        );
+
+        if (!first.is_open() ||
+            !second.is_open()) {
+            return false;
+        }
+
+        const std::size_t bufferSize = 8192;
+
+        char firstBuffer[bufferSize];
+        char secondBuffer[bufferSize];
+
+        while (first && second) {
+
+            first.read(
+                firstBuffer,
+                bufferSize
+            );
+
+            second.read(
+                secondBuffer,
+                bufferSize
+            );
+
+            std::streamsize firstRead =
+                first.gcount();
+
+            std::streamsize secondRead =
+                second.gcount();
+
+            if (firstRead != secondRead) {
                 return false;
             }
-        }
-    }
 
-    return true;
+            for (std::streamsize i = 0;
+                 i < firstRead;
+                 i++) {
+
+                if (firstBuffer[i] !=
+                    secondBuffer[i]) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+    catch (...) {
+        return false;
+    }
 }
 
 bool restoreArchive(
     const std::string& metadataPath,
     const std::string& destinationDirectory,
-    std::string& restoredPath
-)
+    std::string& restoredPath)
 {
+    restoredPath.clear();
+
     ArchiveMetadata metadata;
 
     if (!loadArchiveMetadata(
             metadataPath,
-            metadata
-        )) {
+            metadata)) {
+
+        std::cerr
+            << "Restore error: could not load metadata.\n";
 
         return false;
     }
 
-    if (!fs::exists(
-            metadata.archivePath
-        )) {
+    std::cout
+        << "Restore: metadata loaded.\n";
+
+    if (metadata.archivePath.empty()) {
+
+        std::cerr
+            << "Restore error: archive path is empty.\n";
+
+        return false;
+    }
+
+    if (!fs::exists(metadata.archivePath)) {
+
+        std::cerr
+            << "Restore error: archive does not exist.\n";
+
+        std::cerr
+            << "Archive path: "
+            << metadata.archivePath
+            << "\n";
 
         return false;
     }
@@ -147,24 +168,40 @@ bool restoreArchive(
     fs::path destination;
 
     if (!destinationDirectory.empty()) {
-
+        destination = destinationDirectory;
+    }
+    else {
         destination =
-            fs::path(destinationDirectory);
-
-    } else {
-
-        fs::path originalPath =
-            fs::path(metadata.originalPath);
-
-        destination =
-            originalPath.parent_path();
+            fs::path(metadata.originalPath).parent_path();
     }
 
-    // The original folder may have been removed.
-    // In that case the caller should provide a
-    // different destination directory.
-    if (!fs::exists(destination) ||
-        !fs::is_directory(destination)) {
+    if (destination.empty()) {
+
+        std::cerr
+            << "Restore error: destination is empty.\n";
+
+        return false;
+    }
+
+    try {
+
+        if (!fs::exists(destination)) {
+
+            fs::create_directories(destination);
+        }
+
+        if (!fs::is_directory(destination)) {
+
+            std::cerr
+                << "Restore error: destination is not a directory.\n";
+
+            return false;
+        }
+    }
+    catch (...) {
+
+        std::cerr
+            << "Restore error: could not access destination.\n";
 
         return false;
     }
@@ -176,50 +213,90 @@ bool restoreArchive(
         );
 
     if (!storage.enoughSpace) {
+
+        std::cerr
+            << "Restore error: insufficient free space.\n";
+
+        std::cerr
+            << "Required: "
+            << storage.requiredSpace
+            << " bytes\n";
+
+        std::cerr
+            << "Available: "
+            << storage.freeSpace
+            << " bytes\n";
+
         return false;
     }
 
-    std::string outputPath =
-        getSafeFileName(
+    fs::path outputPath =
+        getSafeFilePath(
             destination,
             metadata.originalName
         );
 
+    std::cout
+        << "Restore destination: "
+        << outputPath.string()
+        << "\n";
+
     if (!decompressFile(
             metadata.archivePath,
-            outputPath
-        )) {
+            outputPath.string())) {
 
-        fs::remove(outputPath);
+        std::cerr
+            << "Restore error: decompression failed.\n";
+
         return false;
     }
 
-    if (!filesMatch(
-            metadata.originalPath,
-            outputPath
-        )) {
+    if (!fs::exists(outputPath)) {
 
-        /*
-         * The original path may no longer exist.
-         * In that case we still have another way
-         * to verify size, but exact comparison
-         * is only possible when the source exists.
-         */
-        if (fs::exists(metadata.originalPath)) {
+        std::cerr
+            << "Restore error: output file was not created.\n";
+
+        return false;
+    }
+
+    // If the original still exists, compare the restored
+    // file with it byte-by-byte.
+    if (fs::exists(metadata.originalPath) &&
+        fs::is_regular_file(metadata.originalPath)) {
+
+        if (!filesMatch(
+                metadata.originalPath,
+                outputPath.string())) {
+
+            std::cerr
+                << "Restore error: restored file does not match original.\n";
 
             fs::remove(outputPath);
+
             return false;
         }
+    }
+    else {
 
+        // Original file is no longer present.
+        // At minimum, verify the original recorded size.
         if (fs::file_size(outputPath) !=
             metadata.originalSize) {
 
+            std::cerr
+                << "Restore error: restored file size is incorrect.\n";
+
             fs::remove(outputPath);
+
             return false;
         }
     }
 
-    restoredPath = outputPath;
+    restoredPath =
+        outputPath.string();
+
+    std::cout
+        << "Restore verification passed.\n";
 
     return true;
 }

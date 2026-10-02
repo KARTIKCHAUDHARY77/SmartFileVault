@@ -1,23 +1,10 @@
 #include "api_server.h"
 
-#include "archive.h"
-
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 
 namespace fs = std::filesystem;
-
-void createTestFile(const std::string& path)
-{
-    std::ofstream file(path);
-
-    for (int i = 0; i < 5000; i++) {
-        file << "SmartFileVault API test data.\n";
-    }
-
-    file.close();
-}
 
 int main()
 {
@@ -27,46 +14,38 @@ int main()
     std::string archiveFolder =
         "api_test_archive";
 
+    /*
+     * Remove only the temporary input folder.
+     * Do not remove the archive folder because
+     * the API needs to keep archived files available.
+     */
     fs::remove_all(testFolder);
-    fs::remove_all(archiveFolder);
 
     fs::create_directories(testFolder);
 
-    std::string testFile =
-        testFolder + "/test.txt";
+    std::ofstream file(
+        testFolder + "/test.txt"
+    );
 
-    createTestFile(testFile);
+    file << "API test file.\n";
+    file.close();
 
-    ArchiveMetadata metadata;
+    // Make sure the archive root exists.
+    fs::create_directories(archiveFolder);
 
-    if (!createArchive(
-            testFile,
-            archiveFolder,
-            metadata)) {
+    std::cout
+        << "Test folder created.\n";
 
-        std::cout << "Could not create test archive.\n";
+    std::cout
+        << "Starting SmartFileVault API...\n";
 
-        fs::remove_all(testFolder);
-        fs::remove_all(archiveFolder);
-
-        return 1;
-    }
-
-    std::cout << "Test archive created.\n";
-    std::cout << "Archive ID: "
-              << metadata.archiveId
-              << "\n";
-
-    std::cout << "\nStarting API server...\n";
-    std::cout << "Use Ctrl + C to stop it.\n\n";
+    std::cout
+        << "Use Ctrl + C to stop the server.\n\n";
 
     startApiServer(
         archiveFolder,
         8080
     );
-
-    fs::remove_all(testFolder);
-    fs::remove_all(archiveFolder);
 
     return 0;
 }

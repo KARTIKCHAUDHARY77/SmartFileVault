@@ -1,12 +1,10 @@
 #include "archive.h"
-
 #include "compression.h"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
-#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -71,94 +69,184 @@ bool saveArchiveMetadata(
 
 bool loadArchiveMetadata(
     const std::string& metadataPath,
-    ArchiveMetadata& metadata
-)
+    ArchiveMetadata& metadata)
 {
-    std::ifstream file(
-        metadataPath
-    );
+    std::ifstream file(metadataPath);
 
-    if (!file) {
+    if (!file.is_open()) {
+        std::cerr
+            << "Metadata error: could not open file.\n";
+        std::cerr
+            << "Path: "
+            << metadataPath
+            << "\n";
         return false;
     }
 
-    std::string originalSize;
-    std::string compressedSize;
-    std::string percentage;
-    std::string archivedAt;
+    std::string originalSizeText;
+    std::string compressedSizeText;
+    std::string percentageText;
+    std::string archivedAtText;
 
-    if (!std::getline(
-            file,
-            metadata.archiveId
-        )) {
+    if (!std::getline(file, metadata.archiveId)) {
+        std::cerr << "Metadata error: archiveId missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            metadata.originalName
-        )) {
+    if (!std::getline(file, metadata.originalName)) {
+        std::cerr << "Metadata error: originalName missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            metadata.originalPath
-        )) {
+    if (!std::getline(file, metadata.originalPath)) {
+        std::cerr << "Metadata error: originalPath missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            metadata.archivePath
-        )) {
+    if (!std::getline(file, metadata.archivePath)) {
+        std::cerr << "Metadata error: archivePath missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            originalSize
-        )) {
+    if (!std::getline(file, originalSizeText)) {
+        std::cerr << "Metadata error: originalSize missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            compressedSize
-        )) {
+    if (!std::getline(file, compressedSizeText)) {
+        std::cerr << "Metadata error: compressedSize missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            percentage
-        )) {
+    if (!std::getline(file, percentageText)) {
+        std::cerr << "Metadata error: percentage missing.\n";
         return false;
     }
 
-    if (!std::getline(
-            file,
-            archivedAt
-        )) {
+    if (!std::getline(file, archivedAtText)) {
+        std::cerr << "Metadata error: archivedAt missing.\n";
+        return false;
+    }
+
+    auto cleanLine = [](std::string& value)
+    {
+        // Remove Windows-style carriage return if present.
+        if (!value.empty() && value.back() == '\r') {
+            value.pop_back();
+        }
+
+        // Remove spaces/tabs from the beginning.
+        std::size_t start =
+            value.find_first_not_of(" \t");
+
+        if (start != std::string::npos) {
+            value.erase(0, start);
+        }
+
+        // Remove spaces/tabs from the end.
+        std::size_t end =
+            value.find_last_not_of(" \t");
+
+        if (end != std::string::npos) {
+            value.erase(end + 1);
+        }
+    };
+
+    cleanLine(metadata.archiveId);
+    cleanLine(metadata.originalName);
+    cleanLine(metadata.originalPath);
+    cleanLine(metadata.archivePath);
+
+    cleanLine(originalSizeText);
+    cleanLine(compressedSizeText);
+    cleanLine(percentageText);
+    cleanLine(archivedAtText);
+
+    if (metadata.archiveId.empty()) {
+        std::cerr << "Metadata error: archiveId is empty.\n";
+        return false;
+    }
+
+    if (metadata.originalName.empty()) {
+        std::cerr << "Metadata error: originalName is empty.\n";
+        return false;
+    }
+
+    if (metadata.originalPath.empty()) {
+        std::cerr << "Metadata error: originalPath is empty.\n";
+        return false;
+    }
+
+    if (metadata.archivePath.empty()) {
+        std::cerr << "Metadata error: archivePath is empty.\n";
         return false;
     }
 
     try {
 
+        std::size_t position = 0;
+
         metadata.originalSize =
-            std::stoull(originalSize);
+            std::stoull(
+                originalSizeText,
+                &position
+            );
+
+        if (position != originalSizeText.size()) {
+            std::cerr
+                << "Metadata error: invalid original size.\n";
+            return false;
+        }
+
+        position = 0;
 
         metadata.compressedSize =
-            std::stoull(compressedSize);
+            std::stoull(
+                compressedSizeText,
+                &position
+            );
+
+        if (position != compressedSizeText.size()) {
+            std::cerr
+                << "Metadata error: invalid compressed size.\n";
+            return false;
+        }
+
+        position = 0;
 
         metadata.compressionPercentage =
-            std::stod(percentage);
+            std::stod(
+                percentageText,
+                &position
+            );
+
+        if (position != percentageText.size()) {
+            std::cerr
+                << "Metadata error: invalid compression percentage.\n";
+            return false;
+        }
+
+        position = 0;
 
         metadata.archivedAt =
-            std::stoll(archivedAt);
+            std::stoll(
+                archivedAtText,
+                &position
+            );
 
+        if (position != archivedAtText.size()) {
+            std::cerr
+                << "Metadata error: invalid archive timestamp.\n";
+            return false;
+        }
     }
-    catch (...) {
+    catch (const std::exception& error) {
+
+        std::cerr
+            << "Metadata conversion error: "
+            << error.what()
+            << "\n";
+
         return false;
     }
 
