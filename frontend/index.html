@@ -1,61 +1,427 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>SmartFileVault</title>
-
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 
-    <header>
-        <h1>SmartFileVault</h1>
-        <p>Automated File Compression and Storage Management</p>
-    </header>
+    <div class="app">
 
-    <main>
-
-        <section class="dashboard">
-
-            <div class="card">
-                <h2>Files Scanned</h2>
-                <p id="filesScanned">0</p>
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-box">S</div>
+                <div>
+                    <h2>SmartFileVault</h2>
+                    <p>File Storage Manager</p>
+                </div>
             </div>
 
-            <div class="card">
-                <h2>Inactive Files</h2>
-                <p id="inactiveFiles">0</p>
+            <nav>
+                <button class="nav-item active" onclick="showSection('dashboard')">
+                    Dashboard
+                </button>
+
+                <button class="nav-item" onclick="showSection('files')">
+                    Files
+                </button>
+
+                <button class="nav-item" onclick="showSection('restore')">
+                    Restore
+                </button>
+
+                <button class="nav-item" onclick="showSection('settings')">
+                    Settings
+                </button>
+            </nav>
+
+            <div class="sidebar-bottom">
+                <p>SmartFileVault</p>
+                <span>C++ Backend • Web Frontend</span>
+            </div>
+        </aside>
+
+        <main class="content">
+
+            <header class="topbar">
+                <div>
+                    <p class="small-title">FILE MANAGEMENT</p>
+                    <h1 id="pageTitle">Dashboard</h1>
+                </div>
+
+                <button class="scan-button" onclick="startScan()">
+                    Scan Files
+                </button>
+            </header>
+
+
+            <!-- DASHBOARD -->
+
+            <section id="dashboard" class="section active-section">
+
+                <div class="hero">
+                    <div>
+                        <p class="eyebrow">SMART STORAGE</p>
+                        <h2>Keep your storage clean.</h2>
+                        <p>
+                            SmartFileVault detects inactive files and compresses
+                            them to reduce unnecessary storage usage.
+                        </p>
+                    </div>
+
+                    <div class="hero-badge">
+                        <strong>Demo Mode</strong>
+                        <span>Backend connection pending</span>
+                    </div>
+                </div>
+
+
+                <div class="stats-grid">
+
+                    <div class="stat-card">
+                        <span>Total Files</span>
+                        <strong id="totalFiles">1284</strong>
+                        <small>Scanned files</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Inactive Files</span>
+                        <strong id="inactiveFiles">137</strong>
+                        <small>Possible compression candidates</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Archived Files</span>
+                        <strong id="archivedFiles">42</strong>
+                        <small>Files safely archived</small>
+                    </div>
+
+                    <div class="stat-card">
+                        <span>Space Saved</span>
+                        <strong id="spaceSaved">2.84 GB</strong>
+                        <small>Storage reduction</small>
+                    </div>
+
+                </div>
+
+
+                <div class="two-column">
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <h3>Storage Overview</h3>
+                                <p>Current storage information</p>
+                            </div>
+                        </div>
+
+                        <div class="storage-number">
+                            <strong>72 GB</strong>
+                            <span>used of 100 GB</span>
+                        </div>
+
+                        <div class="storage-bar">
+                            <div class="storage-fill"></div>
+                        </div>
+
+                        <div class="storage-info">
+                            <div>
+                                <span>Used</span>
+                                <strong>72 GB</strong>
+                            </div>
+
+                            <div>
+                                <span>Free</span>
+                                <strong>28 GB</strong>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div>
+                                <h3>Restore Safety</h3>
+                                <p>Space needed for restoration</p>
+                            </div>
+                        </div>
+
+                        <div class="restore-number">
+                            <strong>850 MB</strong>
+                            <span>maximum restore space</span>
+                        </div>
+
+                        <div class="status-box">
+                            <span class="status-dot"></span>
+                            Enough space available
+                        </div>
+
+                        <p class="note">
+                            This is an advisory value based on the largest
+                            archived file.
+                        </p>
+                    </div>
+
+                </div>
+
+
+                <div class="panel">
+
+                    <div class="panel-header">
+                        <div>
+                            <h3>How SmartFileVault Decides</h3>
+                            <p>Basic compression workflow</p>
+                        </div>
+                    </div>
+
+                    <div class="decision-flow">
+
+                        <div class="flow-step">
+                            <span>01</span>
+                            <strong>Scan</strong>
+                            <p>Find regular files</p>
+                        </div>
+
+                        <div class="flow-arrow">→</div>
+
+                        <div class="flow-step">
+                            <span>02</span>
+                            <strong>Check Type</strong>
+                            <p>Skip already compressed formats</p>
+                        </div>
+
+                        <div class="flow-arrow">→</div>
+
+                        <div class="flow-step">
+                            <span>03</span>
+                            <strong>Check Activity</strong>
+                            <p>Find inactive files</p>
+                        </div>
+
+                        <div class="flow-arrow">→</div>
+
+                        <div class="flow-step">
+                            <span>04</span>
+                            <strong>Compress</strong>
+                            <p>Archive only when useful</p>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- FILES -->
+
+            <section id="files" class="section">
+
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">FILE ACTIVITY</p>
+                        <h2>Files</h2>
+                        <p>Current file status from demo data.</p>
+                    </div>
+
+                    <select id="fileFilter" onchange="filterFiles()">
+                        <option value="all">All Files</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="archived">Archived</option>
+                        <option value="skipped">Skipped</option>
+                    </select>
+                </div>
+
+                <div class="panel table-panel">
+
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Size</th>
+                                <th>Activity</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+
+                        <tbody id="fileTable"></tbody>
+                    </table>
+
+                </div>
+
+            </section>
+
+
+            <!-- RESTORE -->
+
+            <section id="restore" class="section">
+
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">RESTORATION MANAGER</p>
+                        <h2>Restore Archives</h2>
+                        <p>Restore archived files without overwriting newer files.</p>
+                    </div>
+                </div>
+
+                <div class="panel">
+
+                    <div class="restore-info">
+                        <div>
+                            <span>Restore Safety Space</span>
+                            <strong>850 MB</strong>
+                        </div>
+
+                        <div>
+                            <span>Current Free Space</span>
+                            <strong>28 GB</strong>
+                        </div>
+
+                        <div>
+                            <span>Status</span>
+                            <strong class="safe-text">Ready</strong>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div>
+                            <h3>Archived Files</h3>
+                            <p>Select an archived file to restore.</p>
+                        </div>
+                    </div>
+
+                    <div id="restoreList" class="restore-list"></div>
+                </div>
+
+            </section>
+
+
+            <!-- SETTINGS -->
+
+            <section id="settings" class="section">
+
+                <div class="section-heading">
+                    <div>
+                        <p class="eyebrow">CONFIGURATION</p>
+                        <h2>Scan Settings</h2>
+                        <p>Choose when a file should be treated as inactive.</p>
+                    </div>
+                </div>
+
+                <div class="panel settings-panel">
+
+                    <label for="inactiveDays">
+                        Inactivity period
+                    </label>
+
+                    <select id="inactiveDays">
+                        <option value="7">7 days</option>
+                        <option value="30" selected>30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90">90 days</option>
+                    </select>
+
+                    <p class="note">
+                        Files older than the selected period can become
+                        compression candidates.
+                    </p>
+
+                    <button class="save-button" onclick="saveSettings()">
+                        Save Settings
+                    </button>
+
+                    <p id="settingsMessage" class="settings-message"></p>
+
+                </div>
+
+            </section>
+
+        </main>
+
+    </div>
+
+
+    <!-- RESTORE MODAL -->
+
+    <div id="restoreModal" class="modal">
+
+        <div class="modal-box">
+
+            <div class="modal-header">
+                <div>
+                    <p class="eyebrow">RESTORE FILE</p>
+                    <h2 id="modalFileName">File</h2>
+                </div>
+
+                <button class="close-button" onclick="closeRestoreModal()">
+                    ×
+                </button>
             </div>
 
-            <div class="card">
-                <h2>Storage Saved</h2>
-                <p id="storageSaved">0 MB</p>
+            <div class="modal-details">
+
+                <div>
+                    <span>Original Path</span>
+                    <strong id="modalOriginalPath">-</strong>
+                </div>
+
+                <div>
+                    <span>Required Space</span>
+                    <strong id="modalRequiredSpace">-</strong>
+                </div>
+
+                <div>
+                    <span>Available Space</span>
+                    <strong id="modalFreeSpace">-</strong>
+                </div>
+
             </div>
 
-        </section>
+            <label for="restoreDestination">
+                Restore destination
+            </label>
 
-        <section class="files">
+            <input
+                type="text"
+                id="restoreDestination"
+                placeholder="Enter destination folder"
+            >
 
-            <h2>File Management</h2>
+            <p class="note">
+                If the original file name already exists, SmartFileVault
+                will create a safe alternate name instead of overwriting it.
+            </p>
 
-            <button id="scanButton">
-                Scan Files
-            </button>
+            <div class="modal-actions">
 
-            <div id="fileList">
-                No files scanned yet.
+                <button
+                    class="cancel-button"
+                    onclick="closeRestoreModal()">
+                    Cancel
+                </button>
+
+                <button
+                    class="confirm-button"
+                    onclick="confirmRestore()">
+                    Restore File
+                </button>
+
             </div>
 
-        </section>
+        </div>
 
-    </main>
+    </div>
+
 
     <script src="script.js"></script>
 
 </body>
-
 </html>
