@@ -9,27 +9,51 @@ static std::string escapeJsonString(
 {
     std::string result;
 
-    for (char ch : text)
+    const char hexDigits[] = "0123456789abcdef";
+
+    for (unsigned char ch : text)
     {
-        if (ch == '\\')
+        switch (ch)
         {
-            result += "\\\\";
-        }
-        else if (ch == '"')
-        {
-            result += "\\\"";
-        }
-        else if (ch == '\n')
-        {
-            result += "\\n";
-        }
-        else if (ch == '\r')
-        {
-            result += "\\r";
-        }
-        else
-        {
-            result += ch;
+            case '"':
+                result += "\\\"";
+                break;
+
+            case '\\':
+                result += "\\\\";
+                break;
+
+            case '\b':
+                result += "\\b";
+                break;
+
+            case '\f':
+                result += "\\f";
+                break;
+
+            case '\n':
+                result += "\\n";
+                break;
+
+            case '\r':
+                result += "\\r";
+                break;
+
+            case '\t':
+                result += "\\t";
+                break;
+
+            default:
+                if (ch < 0x20)
+                {
+                    result += "\\u00";
+                    result += hexDigits[(ch >> 4) & 0x0F];
+                    result += hexDigits[ch & 0x0F];
+                }
+                else
+                {
+                    result += static_cast<char>(ch);
+                }
         }
     }
 
@@ -42,33 +66,25 @@ static std::string formatFileSize(
 {
     std::ostringstream output;
 
-    if (size >=
-        1024ULL * 1024ULL * 1024ULL)
+    if (size >= 1024ULL * 1024ULL * 1024ULL)
     {
-        output
-            << std::fixed
-            << std::setprecision(2)
-            << (double)size /
-               (1024.0 * 1024.0 * 1024.0)
-            << " GB";
+        output << std::fixed << std::setprecision(2)
+               << static_cast<double>(size)
+                  / (1024.0 * 1024.0 * 1024.0)
+               << " GB";
     }
-    else if (size >=
-             1024ULL * 1024ULL)
+    else if (size >= 1024ULL * 1024ULL)
     {
-        output
-            << std::fixed
-            << std::setprecision(2)
-            << (double)size /
-               (1024.0 * 1024.0)
-            << " MB";
+        output << std::fixed << std::setprecision(2)
+               << static_cast<double>(size)
+                  / (1024.0 * 1024.0)
+               << " MB";
     }
     else if (size >= 1024ULL)
     {
-        output
-            << std::fixed
-            << std::setprecision(2)
-            << (double)size / 1024.0
-            << " KB";
+        output << std::fixed << std::setprecision(2)
+               << static_cast<double>(size) / 1024.0
+               << " KB";
     }
     else
     {
@@ -90,7 +106,6 @@ bool saveScanReport(
         return false;
     }
 
-
     int inactiveCount = 0;
     int activeCount = 0;
 
@@ -106,74 +121,57 @@ bool saveScanReport(
         }
     }
 
-
     file << "{\n";
 
     file << "  \"totalFiles\": "
-         << result.files.size()
-         << ",\n";
+         << result.files.size() << ",\n";
 
     file << "  \"inactiveFiles\": "
-         << inactiveCount
-         << ",\n";
+         << inactiveCount << ",\n";
 
     file << "  \"activeFiles\": "
-         << activeCount
-         << ",\n";
+         << activeCount << ",\n";
 
     file << "  \"skippedFiles\": "
-         << result.skippedFiles
-         << ",\n";
-
+         << result.skippedFiles << ",\n";
 
     file << "  \"files\": [\n";
 
-    for (std::size_t i = 0;
-         i < result.files.size();
-         i++)
+    for (std::size_t i = 0; i < result.files.size(); i++)
     {
-        const FileMetadata& item =
-            result.files[i];
+        const FileMetadata& item = result.files[i];
 
         file << "    {\n";
 
         file << "      \"fileName\": \""
-             << escapeJsonString(
-                    item.fileName)
+             << escapeJsonString(item.fileName)
              << "\",\n";
 
         file << "      \"filePath\": \""
-             << escapeJsonString(
-                    item.filePath)
+             << escapeJsonString(item.filePath)
              << "\",\n";
 
         file << "      \"extension\": \""
-             << escapeJsonString(
-                    item.extension)
+             << escapeJsonString(item.extension)
              << "\",\n";
 
         file << "      \"size\": "
-             << item.size
-             << ",\n";
+             << item.size << ",\n";
 
         file << "      \"sizeText\": \""
              << formatFileSize(item.size)
              << "\",\n";
 
         file << "      \"lastModified\": "
-             << item.lastModified
-             << ",\n";
+             << item.lastModified << ",\n";
 
         file << "      \"status\": \""
-             << (item.inactive
-                    ? "inactive"
-                    : "active")
+             << (item.inactive ? "inactive" : "active")
              << "\"\n";
 
         file << "    }";
 
-        if (i + 1 <
-            result.files.size())
+        if (i + 1 < result.files.size())
         {
             file << ",";
         }
@@ -183,32 +181,27 @@ bool saveScanReport(
 
     file << "  ],\n";
 
-
     file << "  \"skippedDetails\": [\n";
 
     for (std::size_t i = 0;
          i < result.skippedDetails.size();
          i++)
     {
-        const SkippedFile& item =
-            result.skippedDetails[i];
+        const SkippedFile& item = result.skippedDetails[i];
 
         file << "    {\n";
 
         file << "      \"filePath\": \""
-             << escapeJsonString(
-                    item.filePath)
+             << escapeJsonString(item.filePath)
              << "\",\n";
 
         file << "      \"reason\": \""
-             << escapeJsonString(
-                    item.reason)
+             << escapeJsonString(item.reason)
              << "\"\n";
 
         file << "    }";
 
-        if (i + 1 <
-            result.skippedDetails.size())
+        if (i + 1 < result.skippedDetails.size())
         {
             file << ",";
         }
@@ -219,8 +212,14 @@ bool saveScanReport(
     file << "  ]\n";
     file << "}\n";
 
+    file.flush();
+
+    if (!file.good())
+    {
+        return false;
+    }
 
     file.close();
 
-    return true;
+    return !file.fail();
 }
