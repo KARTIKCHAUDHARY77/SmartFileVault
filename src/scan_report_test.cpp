@@ -8,66 +8,157 @@ namespace fs = std::filesystem;
 
 int main()
 {
-    std::string testFolder = "scan_report_test_folder";
-    std::string reportPath = "scan_report_test.json";
+    std::string testFolder =
+        "scan_report_test_folder";
+
+    std::string reportPath =
+        "scan_report_test.json";
+
 
     fs::remove_all(testFolder);
     fs::remove(reportPath);
 
-    fs::create_directories(testFolder);
+    fs::create_directories(
+        testFolder
+    );
 
-    std::ofstream file1(testFolder + "/notes.txt");
+
+    std::ofstream file1(
+        testFolder + "/notes.txt"
+    );
+
     file1 << "Some test notes.";
     file1.close();
 
-    std::ofstream file2(testFolder + "/project.cpp");
-    file2 << "int main() { return 0; }";
+
+    std::ofstream file2(
+        testFolder + "/project.cpp"
+    );
+
+    file2
+        << "int main() { return 0; }";
+
     file2.close();
+
 
     FileScanResult result;
 
-    if (!scanDirectory(testFolder, 30, result)) {
-        std::cout << "Scan failed.\n";
 
-        fs::remove_all(testFolder);
+    if (!scanDirectory(
+            testFolder,
+            30,
+            result))
+    {
+        std::cout
+            << "Scan failed.\n";
+
+        fs::remove_all(
+            testFolder
+        );
+
         return 1;
     }
 
-    if (!saveScanReport(result, reportPath)) {
-        std::cout << "Report creation failed.\n";
 
-        fs::remove_all(testFolder);
+    if (!saveScanReport(
+            result,
+            reportPath))
+    {
+        std::cout
+            << "Report creation failed.\n";
+
+        fs::remove_all(
+            testFolder
+        );
+
         return 1;
     }
 
-    std::cout << "Scan report created successfully.\n";
-    std::cout << "Files found: "
-              << result.files.size() << "\n";
-    std::cout << "Files skipped: "
-              << result.skippedFiles << "\n";
 
-    std::ifstream report(reportPath);
+    std::cout
+        << "Scan report created successfully.\n";
 
-    if (report.is_open()) {
-        std::cout << "\nGenerated JSON:\n";
-        std::cout << "------------------------------\n";
+    std::cout
+        << "Files found: "
+        << result.files.size()
+        << "\n";
 
-        std::string line;
+    std::cout
+        << "Files skipped: "
+        << result.skippedFiles
+        << "\n";
 
-        while (std::getline(report, line)) {
-            std::cout << line << "\n";
-        }
 
-        report.close();
+    std::cout
+        << "Skipped details: "
+        << result.skippedDetails.size()
+        << "\n";
+
+
+    for (const auto& skipped :
+         result.skippedDetails)
+    {
+        std::cout
+            << "Skipped: "
+            << skipped.filePath
+            << "\n";
+
+        std::cout
+            << "Reason: "
+            << skipped.reason
+            << "\n";
     }
-    else {
-        std::cout << "Could not open generated report.\n";
+
+
+    std::ifstream report(
+        reportPath
+    );
+
+    if (!report.is_open())
+    {
+        std::cout
+            << "Could not open generated report.\n";
+
+        fs::remove_all(testFolder);
+        fs::remove(reportPath);
+
+        return 1;
     }
 
-    fs::remove_all(testFolder);
-    fs::remove(reportPath);
 
-    std::cout << "\nScan report test completed.\n";
+    std::cout
+        << "\nGenerated JSON:\n";
+
+    std::cout
+        << "------------------------------\n";
+
+
+    std::string line;
+
+    while (std::getline(
+        report,
+        line))
+    {
+        std::cout
+            << line
+            << "\n";
+    }
+
+    report.close();
+
+
+    fs::remove_all(
+        testFolder
+    );
+
+    fs::remove(
+        reportPath
+    );
+
+
+    std::cout
+        << "\nScan report test completed.\n";
 
     return 0;
 }
+

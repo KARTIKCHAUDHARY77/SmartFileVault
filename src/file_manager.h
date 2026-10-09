@@ -6,9 +6,19 @@
 #include <string>
 #include <vector>
 
-struct FileScanResult {
+struct SkippedFile
+{
+    std::string filePath;
+    std::string reason;
+};
+
+struct FileScanResult
+{
     std::vector<FileMetadata> files;
+
     int skippedFiles;
+
+    std::vector<SkippedFile> skippedDetails;
 };
 
 bool scanDirectory(const std::string& directoryPath,
