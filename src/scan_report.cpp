@@ -1,61 +1,100 @@
+
 #include "scan_report.h"
 
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 
-std::string escapeJsonString(const std::string& text)
+namespace
 {
-    std::string result;
+    // Escape every character that JSON strings cannot contain directly.
+    std::string escapeJsonString(const std::string& text)
+    {
+        std::string result;
+        const char hexDigits[] = "0123456789abcdef";
 
-    for (char ch : text) {
-        if (ch == '\\') {
-            result += "\\\\";
+        for (unsigned char ch : text) {
+            switch (ch) {
+                case '"':
+                    result += "\\\"";
+                    break;
+
+                case '\\':
+                    result += "\\\\";
+                    break;
+
+                case '\b':
+                    result += "\\b";
+                    break;
+
+                case '\f':
+                    result += "\\f";
+                    break;
+
+                case '\n':
+                    result += "\\n";
+                    break;
+
+                case '\r':
+                    result += "\\r";
+                    break;
+
+                case '\t':
+                    result += "\\t";
+                    break;
+
+                default:
+                    if (ch < 0x20) {
+                        result += "\\u00";
+                        result += hexDigits[(ch >> 4) & 0x0F];
+                        result += hexDigits[ch & 0x0F];
+                    }
+                    else {
+                        result += static_cast<char>(ch);
+                    }
+                    break;
+            }
         }
-        else if (ch == '"') {
-            result += "\\\"";
+
+        return result;
+    }
+
+
+    std::string formatFileSize(std::uintmax_t size)
+    {
+        std::ostringstream output;
+
+        if (size >= 1024ULL * 1024ULL * 1024ULL) {
+            output << std::fixed << std::setprecision(2)
+                   << static_cast<double>(size)
+                      / (1024.0 * 1024.0 * 1024.0)
+                   << " GB";
         }
-        else if (ch == '\n') {
-            result += "\\n";
+        else if (size >= 1024ULL * 1024ULL) {
+            output << std::fixed << std::setprecision(2)
+                   << static_cast<double>(size)
+                      / (1024.0 * 1024.0)
+                   << " MB";
+        }
+        else if (size >= 1024ULL) {
+            output << std::fixed << std::setprecision(2)
+                   << static_cast<double>(size) / 1024.0
+                   << " KB";
         }
         else {
-            result += ch;
+            output << size << " B";
         }
-    }
 
-    return result;
+        return output.str();
+    }
 }
 
-std::string formatFileSize(std::uintmax_t size)
+
+bool saveScanReport(
+    const FileScanResult& result,
+    const std::string& outputPath)
 {
-    std::ostringstream output;
-
-    if (size >= 1024ULL * 1024ULL * 1024ULL) {
-        output << std::fixed << std::setprecision(2)
-               << (double)size / (1024.0 * 1024.0 * 1024.0)
-               << " GB";
-    }
-    else if (size >= 1024ULL * 1024ULL) {
-        output << std::fixed << std::setprecision(2)
-               << (double)size / (1024.0 * 1024.0)
-               << " MB";
-    }
-    else if (size >= 1024ULL) {
-        output << std::fixed << std::setprecision(2)
-               << (double)size / 1024.0
-               << " KB";
-    }
-    else {
-        output << size << " B";
-    }
-
-    return output.str();
-}
-
-bool saveScanReport(const FileScanResult& result,
-                    const std::string& outputPath)
-{
-    std::ofstream file(outputPath);
+    std::ofstream file(outputPath, std::ios::binary);
 
     if (!file.is_open()) {
         return false;
@@ -90,7 +129,6 @@ bool saveScanReport(const FileScanResult& result,
     file << "  \"files\": [\n";
 
     for (std::size_t i = 0; i < result.files.size(); i++) {
-
         const FileMetadata& item = result.files[i];
 
         file << "    {\n";
@@ -133,7 +171,14 @@ bool saveScanReport(const FileScanResult& result,
     file << "  ]\n";
     file << "}\n";
 
+    // Detect disk/write errors instead of reporting success incorrectly.
+    file.flush();
+
+    if (!file.good()) {
+        return false;
+    }
+
     file.close();
 
-    return true;
+    return !file.fail();
 }
