@@ -5,23 +5,31 @@
 #include "vault_service.h"
 #include "vault_report.h"
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <netinet/in.h>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
 
+
 namespace
 {
+    // Read one HTTP request, including its complete Content-Length body.
+    // Header names are matched without regard to letter case.
     std::string readRequest(int clientSocket)
     {
+        constexpr std::size_t maxRequestSize = 1024 * 1024;
+
         std::string request;
         char buffer[4096];
 
-        while (true) {
-            int bytesRead = recv(
+        while (request.size() <= maxRequestSize) {
+            ssize_t bytesRead = recv(
                 clientSocket,
                 buffer,
                 sizeof(buffer),
@@ -32,63 +40,125 @@ namespace
                 break;
             }
 
-            request.append(buffer, bytesRead);
+            request.append(
+                buffer,
+                static_cast<std::size_t>(bytesRead)
+            );
 
-            // Keep requests within a reasonable size.
-            if (request.size() > 50000) {
-                break;
+            if (request.size() > maxRequestSize) {
+                return "";
             }
 
             std::size_t headerEnd =
                 request.find("\r\n\r\n");
 
-            // Wait until all HTTP headers have arrived.
             if (headerEnd == std::string::npos) {
                 continue;
             }
 
-            std::size_t lengthPos =
-                request.find("Content-Length:");
+            std::string headerText =
+                request.substr(0, headerEnd);
 
-            // GET requests usually have no request body.
-            if (lengthPos == std::string::npos) {
-                break;
+            std::istringstream headerStream(headerText);
+            std::string line;
+
+            // The first line is the HTTP request line.
+            std::getline(headerStream, line);
+
+            std::optional<std::size_t> contentLength;
+            bool invalidHeader = false;
+
+            while (std::getline(headerStream, line)) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+
+                std::size_t colon = line.find(':');
+
+                if (colon == std::string::npos) {
+                    continue;
+                }
+
+                std::string headerName =
+                    line.substr(0, colon);
+
+                std::transform(
+                    headerName.begin(),
+                    headerName.end(),
+                    headerName.begin(),
+                    [](unsigned char ch) {
+                        return static_cast<char>(
+                            std::tolower(ch)
+                        );
+                    }
+                );
+
+                if (headerName != "content-length") {
+                    continue;
+                }
+
+                std::string value =
+                    line.substr(colon + 1);
+
+                std::size_t valueStart =
+                    value.find_first_not_of(" \t");
+
+                if (valueStart == std::string::npos ||
+                    contentLength.has_value()) {
+                    invalidHeader = true;
+                    break;
+                }
+
+                value =
+                    value.substr(valueStart);
+
+                std::size_t valueEnd =
+                    value.find_last_not_of(" \t");
+
+                value =
+                    value.substr(0, valueEnd + 1);
+
+                try {
+                    std::size_t consumed = 0;
+
+                    unsigned long long parsedLength =
+                        std::stoull(value, &consumed);
+
+                    if (consumed != value.size() ||
+                        parsedLength > maxRequestSize) {
+                        invalidHeader = true;
+                        break;
+                    }
+
+                    contentLength =
+                        static_cast<std::size_t>(parsedLength);
+                }
+                catch (...) {
+                    invalidHeader = true;
+                    break;
+                }
             }
 
-            std::size_t lineEnd =
-                request.find("\r\n", lengthPos);
-
-            if (lineEnd == std::string::npos) {
-                break;
+            if (invalidHeader) {
+                return "";
             }
 
-            std::string lengthText = request.substr(
-                lengthPos + 15,
-                lineEnd - (lengthPos + 15)
-            );
-
-            int contentLength = 0;
-
-            try {
-                contentLength = std::stoi(lengthText);
-            }
-            catch (...) {
-                break;
-            }
-
-            if (contentLength < 0) {
-                break;
+            // Requests without Content-Length are treated as
+            // having no body. This server does not support
+            // chunked request bodies.
+            if (!contentLength.has_value()) {
+                return request;
             }
 
             std::size_t bodyStart = headerEnd + 4;
 
             if (request.size() >=
-                bodyStart + static_cast<std::size_t>(contentLength)) {
-                break;
+                bodyStart + contentLength.value()) {
+                return request;
             }
         }
 
-        return request;
+        return "";
     }
 
 
@@ -106,7 +176,8 @@ namespace
 
     std::string getPath(const std::string& request)
     {
-        std::size_t firstSpace = request.find(' ');
+        std::size_t firstSpace =
+            request.find(' ');
 
         if (firstSpace == std::string::npos) {
             return "";
@@ -141,7 +212,7 @@ namespace
 
     std::string readFile(const std::string& path)
     {
-        std::ifstream file(path);
+        std::ifstream file(path, std::ios::binary);
 
         if (!file.is_open()) {
             return "";
@@ -158,6 +229,7 @@ namespace
     }
 
 
+    // Escape strings before placing them into JSON responses.
     std::string jsonEscape(const std::string& text)
     {
         std::string result;
@@ -165,12 +237,12 @@ namespace
 
         for (unsigned char ch : text) {
             switch (ch) {
-                case '\\':
-                    result += "\\\\";
-                    break;
-
                 case '"':
                     result += "\\\"";
+                    break;
+
+                case '\\':
+                    result += "\\\\";
                     break;
 
                 case '\b':
@@ -210,42 +282,234 @@ namespace
     }
 
 
+    // Convert a Unicode code point to UTF-8.
+    void appendUtf8(
+        std::string& output,
+        unsigned int codePoint)
+    {
+        if (codePoint <= 0x7F) {
+            output += static_cast<char>(codePoint);
+        }
+        else if (codePoint <= 0x7FF) {
+            output += static_cast<char>(
+                0xC0 | (codePoint >> 6)
+            );
+            output += static_cast<char>(
+                0x80 | (codePoint & 0x3F)
+            );
+        }
+        else if (codePoint <= 0xFFFF) {
+            output += static_cast<char>(
+                0xE0 | (codePoint >> 12)
+            );
+            output += static_cast<char>(
+                0x80 | ((codePoint >> 6) & 0x3F)
+            );
+            output += static_cast<char>(
+                0x80 | (codePoint & 0x3F)
+            );
+        }
+        else {
+            output += static_cast<char>(
+                0xF0 | (codePoint >> 18)
+            );
+            output += static_cast<char>(
+                0x80 | ((codePoint >> 12) & 0x3F)
+            );
+            output += static_cast<char>(
+                0x80 | ((codePoint >> 6) & 0x3F)
+            );
+            output += static_cast<char>(
+                0x80 | (codePoint & 0x3F)
+            );
+        }
+    }
+
+
+    int hexValue(char ch)
+    {
+        if (ch >= '0' && ch <= '9') {
+            return ch - '0';
+        }
+
+        if (ch >= 'a' && ch <= 'f') {
+            return ch - 'a' + 10;
+        }
+
+        if (ch >= 'A' && ch <= 'F') {
+            return ch - 'A' + 10;
+        }
+
+        return -1;
+    }
+
+
+    // Read a JSON string value and decode its JSON escapes.
+    // This is a focused parser for our API's flat request objects,
+    // not a complete replacement for a general JSON library.
     std::string getJsonString(
         const std::string& body,
         const std::string& key)
     {
-        std::string search = "\"" + key + "\"";
+        const std::string search =
+            "\"" + key + "\"";
 
-        std::size_t keyPos = body.find(search);
+        std::size_t keyPos =
+            body.find(search);
 
         if (keyPos == std::string::npos) {
             return "";
         }
 
-        std::size_t colon = body.find(':', keyPos);
+        std::size_t colon =
+            body.find(':', keyPos + search.size());
 
         if (colon == std::string::npos) {
             return "";
         }
 
-        std::size_t firstQuote = body.find('"', colon + 1);
+        std::size_t pos =
+            body.find_first_not_of(
+                " \t\r\n",
+                colon + 1
+            );
 
-        if (firstQuote == std::string::npos) {
+        if (pos == std::string::npos ||
+            body[pos] != '"') {
             return "";
         }
 
-        std::size_t secondQuote = body.find('"', firstQuote + 1);
+        ++pos;
 
-        if (secondQuote == std::string::npos) {
-            return "";
+        std::string result;
+
+        while (pos < body.size()) {
+            char ch = body[pos++];
+
+            if (ch == '"') {
+                return result;
+            }
+
+            if (ch != '\\') {
+                if (static_cast<unsigned char>(ch) < 0x20) {
+                    return "";
+                }
+
+                result += ch;
+                continue;
+            }
+
+            if (pos >= body.size()) {
+                return "";
+            }
+
+            char escaped = body[pos++];
+
+            switch (escaped) {
+                case '"':
+                    result += '"';
+                    break;
+
+                case '\\':
+                    result += '\\';
+                    break;
+
+                case '/':
+                    result += '/';
+                    break;
+
+                case 'b':
+                    result += '\b';
+                    break;
+
+                case 'f':
+                    result += '\f';
+                    break;
+
+                case 'n':
+                    result += '\n';
+                    break;
+
+                case 'r':
+                    result += '\r';
+                    break;
+
+                case 't':
+                    result += '\t';
+                    break;
+
+                case 'u': {
+                    if (pos + 4 > body.size()) {
+                        return "";
+                    }
+
+                    unsigned int codePoint = 0;
+
+                    for (int i = 0; i < 4; ++i) {
+                        int digit = hexValue(body[pos + i]);
+
+                        if (digit < 0) {
+                            return "";
+                        }
+
+                        codePoint =
+                            (codePoint << 4)
+                            | static_cast<unsigned int>(digit);
+                    }
+
+                    pos += 4;
+
+                    // Decode UTF-16 surrogate pairs.
+                    if (codePoint >= 0xD800 &&
+                        codePoint <= 0xDBFF) {
+                        if (pos + 6 > body.size() ||
+                            body[pos] != '\\' ||
+                            body[pos + 1] != 'u') {
+                            return "";
+                        }
+
+                        pos += 2;
+                        unsigned int low = 0;
+
+                        for (int i = 0; i < 4; ++i) {
+                            int digit = hexValue(body[pos + i]);
+
+                            if (digit < 0) {
+                                return "";
+                            }
+
+                            low =
+                                (low << 4)
+                                | static_cast<unsigned int>(digit);
+                        }
+
+                        if (low < 0xDC00 || low > 0xDFFF) {
+                            return "";
+                        }
+
+                        pos += 4;
+
+                        codePoint =
+                            0x10000
+                            + ((codePoint - 0xD800) << 10)
+                            + (low - 0xDC00);
+                    }
+                    else if (codePoint >= 0xDC00 &&
+                             codePoint <= 0xDFFF) {
+                        return "";
+                    }
+
+                    appendUtf8(result, codePoint);
+                    break;
+                }
+
+                default:
+                    return "";
+            }
         }
 
-        // Simple string extraction for this project's API.
-        // This does not decode escaped quotes inside JSON strings.
-        return body.substr(
-            firstQuote + 1,
-            secondQuote - firstQuote - 1
-        );
+        // Reject strings without a closing quote.
+        return "";
     }
 
 
@@ -253,24 +517,28 @@ namespace
         const std::string& body,
         const std::string& key)
     {
-        std::string search = "\"" + key + "\"";
+        const std::string search =
+            "\"" + key + "\"";
 
-        std::size_t keyPos = body.find(search);
+        std::size_t keyPos =
+            body.find(search);
 
         if (keyPos == std::string::npos) {
             return 0;
         }
 
-        std::size_t colon = body.find(':', keyPos);
+        std::size_t colon =
+            body.find(':', keyPos + search.size());
 
         if (colon == std::string::npos) {
             return 0;
         }
 
-        std::size_t start = body.find_first_not_of(
-            " \t\r\n",
-            colon + 1
-        );
+        std::size_t start =
+            body.find_first_not_of(
+                " \t\r\n",
+                colon + 1
+            );
 
         if (start == std::string::npos) {
             return 0;
@@ -278,16 +546,22 @@ namespace
 
         try {
             std::size_t consumed = 0;
-            int value = std::stoi(body.substr(start), &consumed);
 
-            // Reject values that are not complete integers.
-            std::size_t end = start + consumed;
-            std::size_t next = body.find_first_not_of(
-                " \t\r\n",
-                end
-            );
+            int value =
+                std::stoi(body.substr(start), &consumed);
 
-            if (next != std::string::npos && body[next] != ',' &&
+            if (consumed == 0) {
+                return 0;
+            }
+
+            std::size_t next =
+                body.find_first_not_of(
+                    " \t\r\n",
+                    start + consumed
+                );
+
+            if (next != std::string::npos &&
+                body[next] != ',' &&
                 body[next] != '}') {
                 return 0;
             }
@@ -312,30 +586,39 @@ namespace
     }
 
 
-    std::string makeScanResponse(const ApplicationResult& result)
+    std::string makeScanResponse(
+        const ApplicationResult& result)
     {
         std::ostringstream json;
 
         json << "{\n";
         json << "  \"success\": true,\n";
+
         json << "  \"scannedFiles\": "
              << result.scannedFiles << ",\n";
+
         json << "  \"scanSkippedFiles\": "
              << result.scanSkippedFiles << ",\n";
+
         json << "  \"inactiveFiles\": "
              << result.processResult.inactiveFiles << ",\n";
+
         json << "  \"archivedFiles\": "
              << result.processResult.archivedFiles << ",\n";
+
         json << "  \"skippedFiles\": "
              << result.processResult.skippedFiles << ",\n";
+
         json << "  \"spaceSaved\": "
              << result.processResult.spaceSaved << "\n";
+
         json << "}";
 
         return json.str();
     }
 
 
+    // Send all response bytes, including when send() writes partially.
     void sendResponse(
         int clientSocket,
         const std::string& body,
@@ -348,13 +631,12 @@ namespace
         response += "Access-Control-Allow-Origin: *\r\n";
         response += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
         response += "Access-Control-Allow-Headers: Content-Type\r\n";
-        response += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+        response += "Content-Length: " +
+                    std::to_string(body.size()) + "\r\n";
         response += "Connection: close\r\n";
         response += "\r\n";
         response += body;
 
-        // Handle partial sends rather than assuming all bytes
-        // are written in one call.
         std::size_t sent = 0;
 
         while (sent < response.size()) {
@@ -379,11 +661,8 @@ bool startApiServer(
     const std::string& archiveRoot,
     int port)
 {
-    int serverSocket = socket(
-        AF_INET,
-        SOCK_STREAM,
-        0
-    );
+    int serverSocket =
+        socket(AF_INET, SOCK_STREAM, 0);
 
     if (serverSocket < 0) {
         std::cout << "Could not create server socket.\n";
@@ -403,6 +682,8 @@ bool startApiServer(
     sockaddr_in serverAddress{};
 
     serverAddress.sin_family = AF_INET;
+
+    // The API is intended for the local frontend on this computer.
     serverAddress.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     serverAddress.sin_port = htons(port);
 
@@ -442,11 +723,23 @@ bool startApiServer(
         }
 
         std::string request = readRequest(clientSocket);
+
+        if (request.empty()) {
+            sendResponse(
+                clientSocket,
+                makeError("Invalid or incomplete HTTP request."),
+                "400 Bad Request"
+            );
+
+            close(clientSocket);
+            continue;
+        }
+
         std::string method = getRequestMethod(request);
         std::string path = getPath(request);
         std::string body = getBody(request);
 
-        // Browser preflight request.
+        // Browser CORS preflight.
         if (method == "OPTIONS") {
             sendResponse(clientSocket, "{}", "200 OK");
             close(clientSocket);
@@ -481,7 +774,7 @@ bool startApiServer(
             }
         }
 
-        // GET archive list and storage safety information.
+        // GET archives and storage-safety information.
         else if (method == "GET" && path == "/api/archives") {
             std::string reportPath =
                 archiveRoot + "/vault_report.json";
@@ -509,7 +802,7 @@ bool startApiServer(
             }
         }
 
-        // GET results from the latest completed scan.
+        // GET the latest scan report for the frontend.
         else if (method == "GET" && path == "/api/files") {
             std::string reportPath =
                 archiveRoot + "/scan_report.json";
@@ -530,7 +823,7 @@ bool startApiServer(
             }
         }
 
-        // POST scan and process inactive files.
+        // POST scan and archive eligible inactive files.
         else if (method == "POST" && path == "/api/scan") {
             std::string folderPath =
                 getJsonString(body, "folderPath");
@@ -565,14 +858,16 @@ bool startApiServer(
                 else {
                     sendResponse(
                         clientSocket,
-                        makeError("Scan and archive operation failed."),
+                        makeError(
+                            "Scan and archive operation failed."
+                        ),
                         "500 Internal Server Error"
                     );
                 }
             }
         }
 
-        // POST restore an archived file to the chosen directory.
+        // POST restore an archive to the selected destination.
         else if (method == "POST" && path == "/api/restore") {
             std::string archiveId =
                 getJsonString(body, "archiveId");
@@ -623,7 +918,7 @@ bool startApiServer(
             }
         }
 
-        // Unknown route.
+        // Unknown endpoint.
         else {
             sendResponse(
                 clientSocket,
