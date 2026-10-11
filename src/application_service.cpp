@@ -1,4 +1,11 @@
+
 #include "application_service.h"
+#include "scan_report.h"
+
+#include <filesystem>
+#include <system_error>
+
+namespace fs = std::filesystem;
 
 bool runScanAndArchive(const std::string& directoryPath,
                        int inactiveDays,
@@ -12,7 +19,7 @@ bool runScanAndArchive(const std::string& directoryPath,
 
     FileScanResult scanResult;
 
-    // First scan the directory
+    // Scan the selected directory first.
     if (!scanDirectory(directoryPath, inactiveDays, scanResult)) {
         return false;
     }
@@ -23,7 +30,24 @@ bool runScanAndArchive(const std::string& directoryPath,
     result.scanSkippedFiles =
         scanResult.skippedFiles;
 
-    // Process the inactive files
+    // Make sure the report directory exists.
+    std::error_code directoryError;
+
+    fs::create_directories(archiveRoot, directoryError);
+
+    if (directoryError) {
+        return false;
+    }
+
+    // Save the scan snapshot for the API and frontend.
+    fs::path reportPath =
+        fs::path(archiveRoot) / "scan_report.json";
+
+    if (!saveScanReport(scanResult, reportPath.string())) {
+        return false;
+    }
+
+    // Process inactive files after saving the scan snapshot.
     if (!processInactiveFiles(
             scanResult.files,
             archiveRoot,
