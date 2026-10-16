@@ -18,8 +18,8 @@ int main()
             .count();
 
     const fs::path testRoot =
-        fs::temp_directory_path()
-        / ("smartfilevault_report_test_" + std::to_string(stamp));
+        fs::temp_directory_path() /
+        ("smartfilevault_report_test_" + std::to_string(stamp));
 
     std::error_code error;
 
@@ -57,7 +57,13 @@ int main()
 
     result.files.push_back(oldFile);
     result.files.push_back(activeFile);
-    result.skippedFiles = 1;
+
+    result.skippedDetails.push_back({
+        "/tmp/unreadable\\notes.txt",
+        "Permission denied: \"read\""
+    });
+    result.skippedFiles =
+        static_cast<int>(result.skippedDetails.size());
 
     if (!saveScanReport(result, reportPath.string())) {
         std::cout << "FAIL: Could not create scan report.\n";
@@ -100,6 +106,17 @@ int main()
     check(contains("\"inactiveFiles\": 1"), "Inactive file count");
     check(contains("\"activeFiles\": 1"), "Active file count");
     check(contains("\"skippedFiles\": 1"), "Skipped file count");
+
+    check(
+        contains("\"skippedDetails\": ["),
+        "Skipped details array"
+    );
+
+    check(
+        contains("\"filePath\": \"/tmp/unreadable\\\\notes.txt\"") &&
+        contains("\"reason\": \"Permission denied: \\\"read\\\"\""),
+        "Skipped path and reason are JSON-escaped"
+    );
 
     check(
         contains("\"status\": \"inactive\""),
