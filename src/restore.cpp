@@ -212,6 +212,13 @@ bool restoreArchive(
             destination.string()
         );
 
+    if (!storage.spaceCheckSucceeded) {
+        std::cerr
+            << "Restore error: could not determine available free space. "
+            << "Check the destination path and permissions.\n";
+        return false;
+    }
+
     if (!storage.enoughSpace) {
 
         std::cerr
