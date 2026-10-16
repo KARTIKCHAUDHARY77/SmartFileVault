@@ -7,7 +7,7 @@
 
 namespace
 {
-    // Escape every character that JSON strings cannot contain directly.
+    // Escape characters that JSON strings cannot contain directly.
     std::string escapeJsonString(const std::string& text)
     {
         std::string result;
@@ -59,7 +59,6 @@ namespace
         return result;
     }
 
-
     std::string formatFileSize(std::uintmax_t size)
     {
         std::ostringstream output;
@@ -88,7 +87,6 @@ namespace
         return output.str();
     }
 }
-
 
 bool saveScanReport(
     const FileScanResult& result,
@@ -126,9 +124,36 @@ bool saveScanReport(
     file << "  \"skippedFiles\": "
          << result.skippedFiles << ",\n";
 
+    // Include details for files or directories that could not be processed.
+    file << "  \"skippedDetails\": [\n";
+
+    for (std::size_t i = 0; i < result.skippedDetails.size(); ++i) {
+        const SkippedFile& item = result.skippedDetails[i];
+
+        file << "    {\n";
+
+        file << "      \"filePath\": \""
+             << escapeJsonString(item.filePath)
+             << "\",\n";
+
+        file << "      \"reason\": \""
+             << escapeJsonString(item.reason)
+             << "\"\n";
+
+        file << "    }";
+
+        if (i + 1 < result.skippedDetails.size()) {
+            file << ",";
+        }
+
+        file << "\n";
+    }
+
+    file << "  ],\n";
+
     file << "  \"files\": [\n";
 
-    for (std::size_t i = 0; i < result.files.size(); i++) {
+    for (std::size_t i = 0; i < result.files.size(); ++i) {
         const FileMetadata& item = result.files[i];
 
         file << "    {\n";
