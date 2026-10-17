@@ -73,8 +73,8 @@
                     </div>
 
                     <div class="hero-badge">
-                        <strong>Demo Mode</strong>
-                        <span>Backend connection pending</span>
+                        <strong>Connecting...</strong>
+                        <span>Connecting to C++ API</span>
                     </div>
                 </div>
 
@@ -83,25 +83,25 @@
 
                     <div class="stat-card">
                         <span>Total Files</span>
-                        <strong id="totalFiles">1284</strong>
+                        <strong id="totalFiles">-</strong>
                         <small>Scanned files</small>
                     </div>
 
                     <div class="stat-card">
                         <span>Inactive Files</span>
-                        <strong id="inactiveFiles">137</strong>
+                        <strong id="inactiveFiles">-</strong>
                         <small>Possible compression candidates</small>
                     </div>
 
                     <div class="stat-card">
                         <span>Archived Files</span>
-                        <strong id="archivedFiles">42</strong>
+                        <strong id="archivedFiles">-</strong>
                         <small>Files safely archived</small>
                     </div>
 
                     <div class="stat-card">
                         <span>Space Saved</span>
-                        <strong id="spaceSaved">2.84 GB</strong>
+                        <strong id="spaceSaved">-</strong>
                         <small>Storage reduction</small>
                     </div>
 
@@ -118,24 +118,25 @@
                             </div>
                         </div>
 
+
                         <div class="storage-number">
-                            <strong>72 GB</strong>
-                            <span>used of 100 GB</span>
+                            <strong id="storageFreeMain">—</strong>
+                            <span>free storage available</span>
                         </div>
 
                         <div class="storage-bar">
-                            <div class="storage-fill"></div>
+                            <div class="storage-fill" style="width: 0%;"></div>
                         </div>
 
                         <div class="storage-info">
                             <div>
-                                <span>Used</span>
-                                <strong>72 GB</strong>
+                                <span>Storage status</span>
+                                <strong>Available</strong>
                             </div>
 
                             <div>
-                                <span>Free</span>
-                                <strong>28 GB</strong>
+                                <span>Free space</span>
+                                <strong id="storageFree">—</strong>
                             </div>
                         </div>
                     </div>
@@ -149,14 +150,14 @@
                             </div>
                         </div>
 
-                        <div class="restore-number">
-                            <strong>850 MB</strong>
-                            <span>maximum restore space</span>
-                        </div>
+                    <div class="restore-number">
+                        <strong id="dashboardRestoreSafety">—</strong>
+                        <span>maximum restore space</span>
+                    </div>
 
                         <div class="status-box">
                             <span class="status-dot"></span>
-                            Enough space available
+                            Check space before restoring
                         </div>
 
                         <p class="note">
@@ -224,15 +225,12 @@
                     <div>
                         <p class="eyebrow">FILE ACTIVITY</p>
                         <h2>Files</h2>
-                        <p>Current file status from demo data.</p>
+                        <p id="fileStatusMessage">Archived files and the latest scan summary will appear here.</p>
                     </div>
 
                     <select id="fileFilter" onchange="filterFiles()">
                         <option value="all">All Files</option>
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
                         <option value="archived">Archived</option>
-                        <option value="skipped">Skipped</option>
                     </select>
                 </div>
 
@@ -274,12 +272,12 @@
                     <div class="restore-info">
                         <div>
                             <span>Restore Safety Space</span>
-                            <strong>850 MB</strong>
+                            <strong id="restoreSafetySpace">—</strong>
                         </div>
 
                         <div>
                             <span>Current Free Space</span>
-                            <strong>28 GB</strong>
+                            <strong id="restoreFreeSpace">—</strong>
                         </div>
 
                         <div>
