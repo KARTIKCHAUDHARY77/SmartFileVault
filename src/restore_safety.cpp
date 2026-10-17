@@ -89,12 +89,17 @@ RestoreStorageStatus checkRestoreSpace(
     status.requiredSpace =
         metadata.originalSize;
 
+    std::error_code error;
+    const fs::space_info info =
+        fs::space(destinationPath, error);
+
+    status.spaceCheckSucceeded = !error;
     status.freeSpace =
-        getFreeSpace(destinationPath);
+        error ? 0 : info.available;
 
     status.enoughSpace =
-        status.freeSpace >=
-        status.requiredSpace;
+        status.spaceCheckSucceeded &&
+        status.freeSpace >= status.requiredSpace;
 
     return status;
 }

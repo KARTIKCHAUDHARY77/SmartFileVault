@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <limits>
 
 namespace fs = std::filesystem;
 
@@ -78,6 +79,13 @@ int main()
             "."
         );
 
+    if (!status.spaceCheckSucceeded) {
+        std::cerr
+            << "FAIL: Free-space lookup failed for existing directory.\n";
+        fs::remove_all(archiveFolder);
+        return 1;
+    }
+
     std::cout
         << "Current free space: "
         << status.freeSpace /
@@ -96,7 +104,56 @@ int main()
                 ? "YES"
                 : "NO")
         << '\n';
+    // A missing child path must not masquerade as measured zero space.
+    RestoreStorageStatus missingStatus =
+        checkRestoreSpace(
+            second,
+            archiveFolder + "/missing-destination"
+        );
 
+    if (missingStatus.spaceCheckSucceeded ||
+        missingStatus.enoughSpace) {
+        std::cerr
+            << "FAIL: Missing destination passed the space preflight.\n";
+        fs::remove_all(archiveFolder);
+        return 1;
+    }
+
+    std::cout
+        << "Missing destination lookup rejected: PASS\n";
+
+    // Test that an impossible restore size is rejected safely.
+    ArchiveMetadata impossible = second;
+
+    impossible.originalSize =
+        std::numeric_limits<decltype(impossible.originalSize)>::max();
+
+    RestoreStorageStatus insufficient =
+        checkRestoreSpace(
+            impossible,
+            archiveFolder
+        );
+
+    if (insufficient.freeSpace == 0) {
+        std::cerr
+            << "FAIL: Could not determine free space "
+            << "for the test directory.\n";
+
+        fs::remove_all(archiveFolder);
+        return 1;
+    }
+
+    if (insufficient.enoughSpace) {
+        std::cerr
+            << "FAIL: Insufficient-space request was accepted.\n";
+
+        fs::remove_all(archiveFolder);
+        return 1;
+    }
+
+    std::cout << "Insufficient-space rejection: PASS\n";
+
+    // Keep your existing cleanup below this line.
     fs::remove_all(
         archiveFolder
     );

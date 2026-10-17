@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <zlib.h>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
@@ -157,8 +158,8 @@ bool decompressFile(
         return false;
     }
 
+    bool success = true;
     char buffer[8192];
-
     int bytesRead = 0;
 
     while ((bytesRead = gzread(
@@ -169,27 +170,46 @@ bool decompressFile(
 
         output.write(
             buffer,
-            bytesRead
+            static_cast<std::streamsize>(bytesRead)
         );
 
         if (!output) {
-            gzclose(input);
-            return false;
+            success = false;
+            break;
         }
     }
 
     int errorCode = Z_OK;
+    gzerror(input, &errorCode);
 
-    gzerror(
-        input,
-        &errorCode
-    );
+    if (bytesRead < 0 || errorCode != Z_OK) {
+        success = false;
+    }
 
-    gzclose(input);
+    if (gzclose(input) != Z_OK) {
+        success = false;
+    }
 
-    return errorCode == Z_OK;
+    output.flush();
+
+    if (!output.good()) {
+        success = false;
+    }
+
+    output.close();
+
+    if (output.fail()) {
+        success = false;
+    }
+
+    if (!success) {
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+        return false;
+    }
+
+    return true;
 }
-
 bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath
