@@ -1,248 +1,151 @@
+
 const API_BASE_URL = "http://localhost:8080";
 
-let usingDemoData = true;
+let apiConnected = false;
+let lastScanResult = JSON.parse(
+    localStorage.getItem("smartFileVaultLastScan") || "null"
+);
+let archiveData = [];
 
-const demoDashboard = {
-    totalFiles: 1284,
-    inactiveFiles: 137,
-    archivedFiles: 42,
-    spaceSaved: "2.84 GB"
-};
+function showConnectionStatus(connected) {
+    apiConnected = connected;
 
-const demoFiles = [
-    {
-        name: "notes.txt",
-        size: "245 KB",
-        activity: "45 days ago",
-        status: "inactive"
-    },
-    {
-        name: "project.cpp",
-        size: "72 KB",
-        activity: "38 days ago",
-        status: "inactive"
-    },
-    {
-        name: "college_work.pdf",
-        size: "18 MB",
-        activity: "82 days ago",
-        status: "archived"
-    },
-    {
-        name: "photo.jpg",
-        size: "3.2 MB",
-        activity: "60 days ago",
-        status: "skipped"
-    },
-    {
-        name: "lecture.mp4",
-        size: "540 MB",
-        activity: "75 days ago",
-        status: "skipped"
-    },
-    {
-        name: "current_notes.txt",
-        size: "120 KB",
-        activity: "2 days ago",
-        status: "active"
-    }
-];
-
-const demoArchives = [
-    {
-        id: "SFV-DEMO-001",
-        name: "college_work.pdf",
-        size: "18 MB",
-        originalPath: "/Documents/college_work.pdf",
-        requiredSpace: "18 MB",
-        freeSpace: "28 GB"
-    },
-    {
-        id: "SFV-DEMO-002",
-        name: "old_project.cpp",
-        size: "2.4 MB",
-        originalPath: "/Projects/old_project.cpp",
-        requiredSpace: "2.4 MB",
-        freeSpace: "28 GB"
-    }
-];
-
-
-/*
- * This object is the only place where the frontend
- * communicates with the C++ backend.
- */
-
-const backend = {
-
-    async getDashboard()
-    {
-        try {
-            const response = await fetch(
-                API_BASE_URL + "/api/dashboard"
-            );
-
-            if (!response.ok) {
-                throw new Error("Dashboard request failed");
-            }
-
-            const data = await response.json();
-
-            if (data.success === false) {
-                throw new Error("Backend returned an error");
-            }
-
-            usingDemoData = false;
-
-            return data;
-        }
-        catch (error) {
-            console.log("Using demo dashboard data.");
-            usingDemoData = true;
-
-            return demoDashboard;
-        }
-    },
-
-
-    async getArchives()
-    {
-        try {
-            const response = await fetch(
-                API_BASE_URL + "/api/archives"
-            );
-
-            if (!response.ok) {
-                throw new Error("Archive request failed");
-            }
-
-            const data = await response.json();
-
-            if (data.success === false) {
-                throw new Error("Backend returned an error");
-            }
-
-            usingDemoData = false;
-
-            return data;
-        }
-        catch (error) {
-            console.log("Using demo archive data.");
-            usingDemoData = true;
-
-            return {
-                archiveCount: demoArchives.length,
-                originalSize: 0,
-                compressedSize: 0,
-                spaceSaved: 0,
-                restoreSafetySpace: 0,
-                freeSpace: 0,
-                archives: demoArchives.map(file => ({
-                    archiveId: file.id,
-                    originalName: file.name,
-                    originalPath: file.originalPath,
-                    originalSizeText: file.requiredSpace,
-                    compressedSizeText: file.size,
-                    archivePath: "",
-                    compressionPercentage: 0,
-                    archivedAt: 0
-                }))
-            };
-        }
-    },
-
-
-    async getFiles()
-    {
-        /*
-         * The scan-report API is not connected yet.
-         * Keep the existing demo file list until
-         * that backend endpoint is added.
-         */
-        return demoFiles;
-    },
-
-
-    async scan(folderPath, inactiveDays)
-    {
-        console.log("Scan request:", {
-            folderPath,
-            inactiveDays
-        });
-
-        /*
-         * The current C++ API only exposes read-only
-         * dashboard and archive endpoints.
-         * Real scan control will be connected later.
-         */
-
-        return {
-            success: false,
-            demo: true,
-            message: "Scan API is not connected yet."
-        };
-    },
-
-
-    async restore(archiveId, destination)
-    {
-        console.log("Restore request:", {
-            archiveId,
-            destination
-        });
-
-        /*
-         * Restore API will be connected after the
-         * backend restore endpoint is added.
-         */
-
-        return {
-            success: false,
-            demo: true
-        };
-    }
-};
-
-
-function showConnectionStatus()
-{
     const badge = document.querySelector(".hero-badge");
 
-    if (!badge) {
-        return;
-    }
+    if (!badge) return;
 
-    if (usingDemoData) {
-
-        badge.innerHTML = `
-            <strong>Demo Mode</strong>
-            <span>C++ API is not connected</span>
-        `;
-    }
-    else {
-
+    if (connected) {
         badge.innerHTML = `
             <strong>Live Backend</strong>
             <span>Connected to C++ API</span>
         `;
+    } else {
+        badge.innerHTML = `
+            <strong>API Unavailable</strong>
+            <span>Check whether the C++ server is running</span>
+        `;
     }
 }
 
+async function getJSON(url, options = {}) {
+    try {
+        const response = await fetch(url, options);
+        const data = await response.json();
 
-function showSection(sectionId)
-{
-    const sections =
-        document.querySelectorAll(".section");
+        if (!response.ok || data.success === false) {
+            throw new Error(data.message || "Request failed.");
+        }
 
-    sections.forEach(section => {
+        showConnectionStatus(true);
+        return data;
+    } catch (error) {
+        showConnectionStatus(false);
+        console.error("API error:", error.message);
+        return null;
+    }
+}
+
+const backend = {
+    async getDashboard() {
+        return await getJSON(`${API_BASE_URL}/api/dashboard`);
+    },
+
+    async getArchives() {
+        return await getJSON(`${API_BASE_URL}/api/archives`);
+    },
+
+    async scan(folderPath, inactiveDays) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/scan`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    folderPath: folderPath,
+                    inactiveDays: inactiveDays
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || data.success !== true) {
+                showConnectionStatus(response.ok);
+                return {
+                    success: false,
+                    message: data.message || "Scan failed."
+                };
+            }
+
+            showConnectionStatus(true);
+            return data;
+        } catch (error) {
+            showConnectionStatus(false);
+
+            return {
+                success: false,
+                message: "Cannot connect to the C++ API. Check whether the server is running."
+            };
+        }
+    },
+
+    async restore(archiveId, destination) {
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/restore`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    archiveId: archiveId,
+                    destination: destination
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || data.success !== true) {
+                showConnectionStatus(response.ok);
+                return {
+                    success: false,
+                    message: data.message || "Restore failed."
+                };
+            }
+
+            showConnectionStatus(true);
+            return data;
+        } catch (error) {
+            showConnectionStatus(false);
+
+            return {
+                success: false,
+                message: "Cannot connect to the C++ API. Check whether the server is running."
+            };
+        }
+    }
+};
+
+function showSection(sectionId) {
+    document.querySelectorAll(".section").forEach(section => {
         section.classList.remove("active-section");
     });
 
-    const selectedSection =
-        document.getElementById(sectionId);
+    document.querySelectorAll(".nav-item").forEach(item => {
+        item.classList.remove("active");
+    });
 
-    if (selectedSection) {
-        selectedSection.classList.add("active-section");
+    const section = document.getElementById(sectionId);
+
+    if (section) {
+        section.classList.add("active-section");
+    }
+
+    const navItem = document.querySelector(
+        `.nav-item[onclick*="${sectionId}"]`
+    );
+
+    if (navItem) {
+        navItem.classList.add("active");
     }
 
     const titles = {
@@ -252,364 +155,450 @@ function showSection(sectionId)
         settings: "Settings"
     };
 
-    document.getElementById("pageTitle").textContent =
-        titles[sectionId];
+    const title = document.getElementById("pageTitle");
 
-    const navItems =
-        document.querySelectorAll(".nav-item");
-
-    navItems.forEach(item => {
-        item.classList.remove("active");
-
-        if (
-            item.textContent.trim().toLowerCase()
-            === sectionId
-        ) {
-            item.classList.add("active");
-        }
-    });
+    if (title) {
+        title.textContent = titles[sectionId] || "SmartFileVault";
+    }
 }
 
 
-async function updateDashboard()
-{
-    const data =
-        await backend.getDashboard();
+function setText(id, value) {
+    const element = document.getElementById(id);
 
-    document.getElementById("totalFiles").textContent =
-        data.totalFiles ?? data.archiveCount ?? 0;
-
-    document.getElementById("inactiveFiles").textContent =
-        data.inactiveFiles ?? "-";
-
-    document.getElementById("archivedFiles").textContent =
-        data.archivedFiles ?? data.archiveCount ?? 0;
-
-    document.getElementById("spaceSaved").textContent =
-        data.spaceSavedText ??
-        data.spaceSaved ??
-        "0 B";
-
-    showConnectionStatus();
+    if (element) {
+        element.textContent = value;
+    }
 }
 
+async function updateDashboard() {
+    const data = await backend.getDashboard();
 
-function getStatusText(status)
-{
-    const names = {
+    if (!data) {
+        setText("totalFiles", "—");
+        setText("inactiveFiles", "—");
+        setText("archivedFiles", "—");
+        setText("spaceSaved", "—");
+        setText("storageFree", "—");
+        setText("dashboardRestoreSafety", "—");
+        setText("restoreSafetySpace", "—");
+        setText("restoreFreeSpace", "—");
+        return;
+    }
+
+    setText(
+        "totalFiles",
+        lastScanResult ? (lastScanResult.scannedFiles ?? "—") : "—"
+    );
+
+    setText(
+        "inactiveFiles",
+        lastScanResult ? (lastScanResult.inactiveFiles ?? "—") : "—"
+    );
+
+    const visibleArchives = getVisibleArchives(
+        Array.isArray(data.archives) ? data.archives : []
+    );
+
+    const visibleSpaceSaved = visibleArchives.reduce(
+        (total, file) => total + (Number(file.originalSize) - Number(file.compressedSize)),
+        0
+    );
+
+    setText("archivedFiles", visibleArchives.length);
+    setText("spaceSaved", formatBytes(visibleSpaceSaved));
+    setText("storageFree", data.freeSpaceText ?? "—");
+    setText("storageFreeMain", data.freeSpaceText ?? "—");
+
+    setText(
+        "dashboardRestoreSafety",
+        data.restoreSafetySpaceText ?? "—"
+    );
+
+    setText(
+        "restoreSafetySpace",
+        data.restoreSafetySpaceText ?? "—"
+    );
+
+    setText("restoreFreeSpace", data.freeSpaceText ?? "—");
+}
+
+function getStatusText(status) {
+    const statuses = {
         active: "Active",
         inactive: "Inactive",
         archived: "Archived",
         skipped: "Skipped"
     };
 
-    return names[status] || status;
+    return statuses[status] || status || "Unknown";
 }
 
+const RESTORED_ARCHIVES_KEY = "smartFileVaultRestoredArchiveIds";
 
-function createFileRow(file)
-{
-    let action = "";
-
-    if (file.status === "archived") {
-
-        action = `
-            <button
-                class="action-button"
-                onclick="openRestoreModal('${file.name}')">
-                Restore
-            </button>
-        `;
+function getRestoredArchiveIds() {
+    try {
+        const ids = JSON.parse(
+            localStorage.getItem(RESTORED_ARCHIVES_KEY) || "[]"
+        );
+        return new Set(Array.isArray(ids) ? ids : []);
+    } catch {
+        return new Set();
     }
-    else {
-
-        action = `
-            <button class="action-button">
-                View
-            </button>
-        `;
-    }
-
-    return `
-        <tr>
-            <td><strong>${file.name}</strong></td>
-
-            <td>${file.size}</td>
-
-            <td>${file.activity}</td>
-
-            <td>
-                <span class="status status-${file.status}">
-                    ${getStatusText(file.status)}
-                </span>
-            </td>
-
-            <td>
-                ${action}
-            </td>
-        </tr>
-    `;
 }
 
+function markArchiveRestored(archiveId) {
+    if (!archiveId) return;
 
-async function displayFiles(fileList = null)
-{
-    if (!fileList) {
-        fileList = await backend.getFiles();
-    }
+    const ids = getRestoredArchiveIds();
+    ids.add(archiveId);
 
-    const table =
-        document.getElementById("fileTable");
+    localStorage.setItem(
+        RESTORED_ARCHIVES_KEY,
+        JSON.stringify([...ids])
+    );
+}
+
+function getVisibleArchives(archives) {
+    const restoredIds = getRestoredArchiveIds();
+
+    return archives.filter(
+        file => !restoredIds.has(file.archiveId)
+    );
+}
+async function displayFiles() {
+    const table = document.getElementById("fileTable");
+    const statusMessage = document.getElementById("fileStatusMessage");
+
+    if (!table) return;
 
     table.innerHTML = "";
 
-    fileList.forEach(file => {
-        table.innerHTML += createFileRow(file);
-    });
-}
+    const data = await backend.getArchives();
 
-
-async function filterFiles()
-{
-    const filter =
-        document.getElementById("fileFilter").value;
-
-    const fileList =
-        await backend.getFiles();
-
-    if (filter === "all") {
-        displayFiles(fileList);
+    if (!data) {
+        if (statusMessage) {
+            statusMessage.textContent = "Could not load file information. Check the API connection.";
+        }
+        table.innerHTML = `
+            <tr>
+                <td colspan="5">Unable to load files.</td>
+            </tr>
+        `;
         return;
     }
 
-    const filtered =
-        fileList.filter(file => {
-            return file.status === filter;
-        });
+    const archives = getVisibleArchives(
+        Array.isArray(data.archives) ? data.archives : []
+    );
+    const filter = document.getElementById("fileFilter")?.value || "all";
 
-    displayFiles(filtered);
-}
+    if (statusMessage) {
+        statusMessage.textContent = lastScanResult
+            ? `Last scan: ${lastScanResult.scannedFiles ?? 0} scanned, ${lastScanResult.inactiveFiles ?? 0} inactive, ${lastScanResult.archivedFiles ?? 0} archived, ${lastScanResult.skippedFiles ?? 0} skipped.`
+            : "Showing files currently available in the archive.";
+    }
 
+    const files = archives.map(file => ({
+        name: file.originalName || "Unnamed file",
+        path: file.originalPath || "Path unavailable",
+        size: file.originalSizeText || "Size unavailable",
+        status: "archived",
+        activity: file.archivedAt
+            ? new Date(file.archivedAt * 1000).toLocaleDateString()
+            : "Archived"
+    }));
 
-async function displayRestoreFiles()
-{
-    const data =
-        await backend.getArchives();
+    const visibleFiles = filter === "all"
+        ? files
+        : files.filter(file => file.status === filter);
 
-    const archives =
-        data.archives || [];
+    if (visibleFiles.length === 0) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
 
-    const container =
-        document.getElementById("restoreList");
+        cell.colSpan = 5;
+        cell.textContent = filter === "all"
+            ? "No archived files yet. Scan results are summarized above. Files will appear here after successful archiving."
+            : `No ${filter} files are available from the current API data.`;
 
-    container.innerHTML = "";
-
-    if (archives.length === 0) {
-
-        container.innerHTML = `
-            <p class="note">
-                No archived files found.
-            </p>
-        `;
-
+        row.appendChild(cell);
+        table.appendChild(row);
         return;
     }
 
-    archives.forEach(file => {
+    visibleFiles.forEach(file => {
+        const row = document.createElement("tr");
 
-        container.innerHTML += `
-            <div class="restore-item">
+        [file.name, file.size, file.activity, getStatusText(file.status)].forEach(value => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.appendChild(cell);
+        });
 
-                <div>
-                    <strong>${file.originalName}</strong>
+        const actionCell = document.createElement("td");
+        const button = document.createElement("button");
 
-                    <span>
-                        ${file.originalSizeText || "-"}
-                        •
-                        ${file.originalPath || "-"}
-                    </span>
-                </div>
+        button.type = "button";
+        button.textContent = "Restore";
+        button.addEventListener("click", () => {
+            const archive = archives.find(item =>
+                (item.originalName || "Unnamed file") === file.name &&
+                (item.originalPath || "Path unavailable") === file.path
+            );
 
-                <button
-                    class="action-button"
-                    onclick="openRestoreModal('${file.archiveId}')">
-                    Restore
-                </button>
+            if (archive) openRestoreModal(archive.archiveId);
+        });
 
-            </div>
-        `;
+        actionCell.appendChild(button);
+        row.appendChild(actionCell);
+        table.appendChild(row);
     });
 }
 
+async function filterFiles() {
+    await displayFiles();
+}
 
-async function openRestoreModal(archiveId)
-{
-    const data =
-        await backend.getArchives();
+async function displayRestoreFiles() {
+    const list = document.getElementById("restoreList");
 
-    const file =
-        (data.archives || []).find(item => {
-            return item.archiveId === archiveId;
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    const data = await backend.getArchives();
+
+    if (!data) {
+        list.textContent =
+            "Could not load archives. Check that the C++ API is running.";
+        return;
+    }
+
+    archiveData = getVisibleArchives(
+        Array.isArray(data.archives) ? data.archives : []
+    );
+
+    if (archiveData.length === 0) {
+        list.textContent = "No archived files found.";
+        return;
+    }
+
+    archiveData.forEach(file => {
+        const item = document.createElement("div");
+        item.className = "restore-item";
+
+        const details = document.createElement("div");
+        details.className = "restore-item-details";
+
+        const name = document.createElement("strong");
+        name.textContent = file.originalName || "Unnamed file";
+
+        const path = document.createElement("p");
+        path.textContent = file.originalPath || "Path unavailable";
+
+        details.appendChild(name);
+        details.appendChild(path);
+
+        const button = document.createElement("button");
+        button.textContent = "Restore";
+        button.type = "button";
+        button.addEventListener("click", () => {
+            openRestoreModal(file.archiveId);
         });
+
+        item.appendChild(details);
+        item.appendChild(button);
+        list.appendChild(item);
+    });
+}
+
+async function openRestoreModal(archiveId) {
+    const file = archiveData.find(
+        item => item.archiveId === archiveId
+    );
 
     if (!file) {
+        alert("Archive not found. Refresh the archive list and try again.");
         return;
     }
 
-    document.getElementById("modalFileName").textContent =
-        file.originalName;
+    setText("modalFileName", file.originalName || "Unnamed file");
+    setText("modalOriginalPath", file.originalPath || "Path unavailable");
+    setText("modalRequiredSpace", file.originalSizeText || "—");
 
-    document.getElementById("modalOriginalPath").textContent =
-        file.originalPath || "-";
+    const data = await backend.getDashboard();
 
-    document.getElementById("modalRequiredSpace").textContent =
-        file.originalSizeText || "-";
-
-    document.getElementById("modalFreeSpace").textContent =
-        data.freeSpaceText || "-";
-
-    document.getElementById("restoreDestination").value =
-        file.originalPath
-            ? file.originalPath.substring(
-                0,
-                file.originalPath.lastIndexOf("/")
-              )
-            : "";
-
-    document.getElementById("restoreModal")
-        .classList.add("show");
-
-    document.getElementById("restoreModal")
-        .dataset.archiveId = archiveId;
-}
-
-
-function closeRestoreModal()
-{
-    document.getElementById("restoreModal")
-        .classList.remove("show");
-}
-
-
-async function confirmRestore()
-{
-    const archiveId =
-        document.getElementById("restoreModal")
-            .dataset.archiveId;
-
-    const destination =
-        document
-            .getElementById("restoreDestination")
-            .value
-            .trim();
-
-    if (destination === "") {
-
-        alert(
-            "Please enter a restore destination."
-        );
-
+    if (!data) {
+        alert("Could not verify available storage. Check the API connection.");
         return;
     }
 
-    const result =
-        await backend.restore(
-            archiveId,
-            destination
-        );
+    setText("modalFreeSpace", data.freeSpaceText ?? "—");
 
-    if (result.success) {
+    const path = file.originalPath || "";
+    const slash = path.lastIndexOf("/");
+    const parentPath = slash > 0 ? path.substring(0, slash) : "";
 
-        alert(
-            "Restore completed successfully."
-        );
+    const destinationInput = document.getElementById("restoreDestination");
 
-        closeRestoreModal();
+    if (destinationInput) {
+        destinationInput.value = parentPath;
     }
-    else {
 
-        alert(
-            "The restore API is not connected yet."
-        );
+    const modal = document.getElementById("restoreModal");
+
+    if (modal) {
+        modal.dataset.archiveId = archiveId;
+        modal.style.display = "flex";
     }
 }
 
+function closeRestoreModal() {
+    const modal = document.getElementById("restoreModal");
 
-async function startScan()
-{
-    const button =
-        document.querySelector(".scan-button");
+    if (modal) {
+        modal.style.display = "none";
+    }
+}
 
-    const folderPath =
-        prompt("Enter folder path to scan:");
+async function confirmRestore() {
+    const modal = document.getElementById("restoreModal");
+    const destinationInput = document.getElementById("restoreDestination");
 
-    if (!folderPath) {
+    const archiveId = modal?.dataset.archiveId;
+    const destination = destinationInput?.value.trim();
+
+    if (!archiveId) {
+        alert("No archive selected.");
         return;
     }
 
-    const daysElement =
-        document.getElementById("inactiveDays");
+    if (!destination) {
+        alert("Please enter a restore destination.");
+        return;
+    }
 
-    const days =
-        daysElement
-            ? Number(daysElement.value)
-            : 30;
+    const result = await backend.restore(archiveId, destination);
 
-    button.textContent = "Scanning...";
-    button.disabled = true;
+    if (!result.success) {
+        alert(result.message || "Restore failed.");
+        return;
+    }
+    markArchiveRestored(archiveId);
+    alert(
+        "File restored successfully.\n" +
+        (result.restoredPath || "")
+    );
 
-    const result =
-        await backend.scan(
-            folderPath,
-            days
+    closeRestoreModal();
+
+    await updateDashboard();
+    await displayRestoreFiles();
+    await displayFiles();
+}
+function formatBytes(bytes) {
+    if (bytes == null || !Number.isFinite(Number(bytes))) {
+        return "—";
+    }
+
+    bytes = Number(bytes);
+
+    if (bytes < 1024) {
+        return `${bytes} B`;
+    }
+
+    if (bytes < 1024 * 1024) {
+        return `${(bytes / 1024).toFixed(2)} KB`;
+    }
+
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+async function startScan() {
+    const button = document.querySelector(".scan-button");
+
+    const folderPath = prompt(
+        "Enter the full path of the folder you want to scan:"
+    );
+
+    if (folderPath === null || !folderPath.trim()) {
+        return;
+    }
+
+    const daysInput = document.getElementById("inactiveDays");
+    const inactiveDays = Number(daysInput?.value || 30);
+
+    if (!Number.isInteger(inactiveDays) || inactiveDays <= 0) {
+        alert("Please select a valid inactivity period.");
+        return;
+    }
+
+    const oldText = button ? button.textContent : "";
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Scanning...";
+    }
+
+    try {
+        const result = await backend.scan(
+            folderPath.trim(),
+            inactiveDays
         );
+        console.log("Scan API response:", result);
+        if (!result.success) {
+            alert(result.message || "Scan failed.");
+            return;
+        }
 
-    button.textContent = "Scan Files";
-    button.disabled = false;
-
-    if (result.success) {
-
+        lastScanResult = result;
+        localStorage.setItem(
+            "smartFileVaultLastScan",
+            JSON.stringify(result)
+        );
         alert(
-            "Scan completed successfully."
+            "Scan completed successfully.\n\n" +
+            `Files scanned: ${result.scannedFiles ?? "—"}\n` +
+            `Inactive files: ${result.inactiveFiles ?? "—"}\n` +
+            `Files archived: ${result.archivedFiles ?? "—"}\n` +
+            `Files skipped: ${result.skippedFiles ?? "—"}\n` +
+            `Space saved: ${formatBytes(result.spaceSaved)}`
         );
 
         await updateDashboard();
         await displayFiles();
         await displayRestoreFiles();
-
-    }
-    else {
-
-        alert(
-            result.message ||
-            "The scan API is not connected yet."
-        );
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.textContent = oldText;
+        }
     }
 }
 
+function saveSettings() {
+    const daysInput = document.getElementById("inactiveDays");
+    const message = document.getElementById("settingsMessage");
 
-function saveSettings()
-{
-    const days =
-        document.getElementById("inactiveDays").value;
+    const days = Number(daysInput?.value);
 
-    const message =
-        document.getElementById("settingsMessage");
+    if (!Number.isInteger(days) || days <= 0) {
+        if (message) {
+            message.textContent = "Please select a valid number of days.";
+        }
+        return;
+    }
 
-    message.textContent =
-        "Inactivity period saved: "
-        + days
-        + " days.";
+    if (message) {
+        message.textContent =
+            `Inactivity period set to ${days} days for the next scan.`;
+    }
 }
 
+document.addEventListener("DOMContentLoaded", async () => {
+    showConnectionStatus(false);
 
-document.addEventListener(
-    "DOMContentLoaded",
-    async () => {
-
-        await updateDashboard();
-        await displayFiles();
-        await displayRestoreFiles();
-
-    }
-);
+    await updateDashboard();
+    await displayFiles();
+    await displayRestoreFiles();
+});
