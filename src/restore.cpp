@@ -1,3 +1,4 @@
+
 #include "restore.h"
 
 #include "compression.h"
@@ -7,8 +8,42 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 
 namespace fs = std::filesystem;
+
+// Reject metadata filenames that could escape the selected destination.
+static bool isSafeRestoreFilename(const std::string& originalName)
+{
+    if (originalName.empty() ||
+        originalName == "." ||
+        originalName == "..") {
+        return false;
+    }
+
+    // Filenames must not contain path separators or embedded null bytes.
+    if (originalName.find('/') != std::string::npos ||
+        originalName.find('\\') != std::string::npos ||
+        originalName.find('\0') != std::string::npos) {
+        return false;
+    }
+
+    // Reject control characters in metadata-supplied filenames.
+    for (unsigned char character : originalName) {
+        if (character < 0x20 || character == 0x7F) {
+            return false;
+        }
+    }
+
+    const fs::path filename(originalName);
+
+    // A restored name must be one relative filename, not a path.
+    return !filename.is_absolute() &&
+           !filename.has_root_name() &&
+           !filename.has_root_directory() &&
+           !filename.has_parent_path() &&
+           filename.filename() == filename;
+}
 
 static fs::path getSafeFilePath(
     const fs::path& directory,
@@ -137,6 +172,15 @@ bool restoreArchive(
 
         std::cerr
             << "Restore error: could not load metadata.\n";
+
+        return false;
+    }
+
+    // Validate the filename before it is used in any output path.
+    if (!isSafeRestoreFilename(metadata.originalName)) {
+
+        std::cerr
+            << "Restore error: unsafe filename in archive metadata.\n";
 
         return false;
     }
