@@ -1,3 +1,4 @@
+
 #include "vault_service.h"
 
 #include "archive_service.h"
@@ -6,8 +7,44 @@
 #include "restore_safety.h"
 
 #include <filesystem>
+#include <iostream>
+#include <string>
 
 namespace fs = std::filesystem;
+
+// Accept only letters, digits, and hyphens in archive IDs.
+// This supports generated IDs such as SFV-123456789-1
+// and test IDs such as TEST-001, while rejecting path separators
+// and traversal components.
+static bool isSafeArchiveId(const std::string& archiveId)
+{
+    if (archiveId.empty()) {
+        return false;
+    }
+
+    for (unsigned char character : archiveId) {
+
+        const bool isUppercase =
+            character >= 'A' && character <= 'Z';
+
+        const bool isLowercase =
+            character >= 'a' && character <= 'z';
+
+        const bool isDigit =
+            character >= '0' && character <= '9';
+
+        if (!isUppercase &&
+            !isLowercase &&
+            !isDigit &&
+            character != '-') {
+
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 bool processCandidate(
     const std::string& filePath,
@@ -102,6 +139,17 @@ bool restoreFromArchive(
     std::string& restoredPath
 )
 {
+    // Reject invalid IDs before constructing any metadata path.
+    if (!isSafeArchiveId(archiveId)) {
+
+        restoredPath.clear();
+
+        std::cerr
+            << "Restore error: invalid archive ID.\n";
+
+        return false;
+    }
+
     std::string metadataPath =
         archiveRoot +
         "/metadata/" +
