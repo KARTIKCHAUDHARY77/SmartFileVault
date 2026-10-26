@@ -1,10 +1,12 @@
+
 #include "compression.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <zlib.h>
+#include <string>
 #include <system_error>
+#include <zlib.h>
 
 namespace fs = std::filesystem;
 
@@ -92,7 +94,6 @@ bool compressFile(
     char buffer[8192];
 
     while (input) {
-
         input.read(
             buffer,
             sizeof(buffer)
@@ -113,22 +114,38 @@ bool compressFile(
 
         if (written != bytesRead) {
             gzclose(output);
-            fs::remove(outputPath);
+
+            std::error_code cleanupError;
+            fs::remove(outputPath, cleanupError);
+
             return false;
         }
+    }
+
+    if (input.bad()) {
+        gzclose(output);
+
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+
+        return false;
     }
 
     int closeResult = gzclose(output);
 
     if (closeResult != Z_OK) {
-        fs::remove(outputPath);
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+
         return false;
     }
 
     // The source file may have changed while
     // compression was taking place.
     if (fileChanged(before, inputPath)) {
-        fs::remove(outputPath);
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+
         return false;
     }
 
@@ -205,11 +222,13 @@ bool decompressFile(
     if (!success) {
         std::error_code cleanupError;
         fs::remove(outputPath, cleanupError);
+
         return false;
     }
 
     return true;
 }
+
 bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath
@@ -247,12 +266,21 @@ double getCompressionPercentage(
         return 0.0;
     }
 
-    double saved =
-        static_cast<double>(
+    // Calculate the difference without unsigned
+    // underflow when the compressed file is larger.
+    double savedBytes;
+
+    if (originalSize >= compressedSize) {
+        savedBytes = static_cast<double>(
             originalSize - compressedSize
         );
+    } else {
+        savedBytes = -static_cast<double>(
+            compressedSize - originalSize
+        );
+    }
 
-    return (saved /
+    return (savedBytes /
             static_cast<double>(originalSize))
            * 100.0;
 }
