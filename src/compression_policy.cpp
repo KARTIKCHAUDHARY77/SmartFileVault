@@ -1,108 +1,37 @@
 #include "compression_policy.h"
 
-#include <algorithm>
-#include <cctype>
 #include <filesystem>
-#include <unordered_set>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
-namespace {
-
-std::string getExtension(const std::string& filePath) {
-
-    std::string extension =
-        fs::path(filePath).extension().string();
-
-    std::transform(
-        extension.begin(),
-        extension.end(),
-        extension.begin(),
-        [](unsigned char c) {
-            return static_cast<char>(
-                std::tolower(c)
-            );
-        }
-    );
-
-    return extension;
+bool isCompressionResistant(const std::string&) {
+    // Extension-based exclusions are retired. This legacy helper
+    // remains for source compatibility; eligibility is no longer
+    // determined by filename extension.
+    return false;
 }
 
-const std::unordered_set<std::string>
-compressionResistantExtensions = {
+CompressionDecision getCompressionDecision(const std::string& filePath) {
+    std::error_code error;
+    const fs::file_status status = fs::status(filePath, error);
 
-    // Archive formats
-    ".zip",
-    ".rar",
-    ".7z",
-    ".gz",
-    ".bz2",
-    ".xz",
-    ".zst",
-
-    // Image formats
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".gif",
-    ".heic",
-    ".heif",
-
-    // Video formats
-    ".mp4",
-    ".mkv",
-    ".mov",
-    ".avi",
-    ".webm",
-
-    // Audio formats
-    ".mp3",
-    ".aac",
-    ".m4a",
-    ".ogg",
-    ".flac"
-};
-
-}
-
-bool isCompressionResistant(
-    const std::string& filePath
-) {
-    std::string extension =
-        getExtension(filePath);
-
-    return compressionResistantExtensions.find(extension)
-           != compressionResistantExtensions.end();
-}
-
-CompressionDecision getCompressionDecision(
-    const std::string& filePath
-) {
-    if (!fs::exists(filePath) ||
-        !fs::is_regular_file(filePath)) {
-
+    if (error || !fs::is_regular_file(status)) {
         return CompressionDecision::SkipInvalidFile;
     }
 
-    if (isCompressionResistant(filePath)) {
-        return CompressionDecision::SkipAlreadyCompressed;
-    }
-
+    // This means "eligible for a compression attempt", not a promise
+    // that compression will reduce size. The archive pipeline must
+    // verify the round trip and reject outputs without a real benefit.
     return CompressionDecision::Compress;
 }
 
-std::string decisionToString(
-    CompressionDecision decision
-) {
+std::string decisionToString(CompressionDecision decision) {
     switch (decision) {
-
         case CompressionDecision::Compress:
             return "COMPRESS";
-
         case CompressionDecision::SkipAlreadyCompressed:
             return "SKIP_ALREADY_COMPRESSED";
-
         case CompressionDecision::SkipInvalidFile:
             return "SKIP_INVALID_FILE";
     }
