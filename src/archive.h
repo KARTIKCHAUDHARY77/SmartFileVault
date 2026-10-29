@@ -61,4 +61,20 @@ std::uintmax_t getTotalSpaceSaved(
     const std::string& archiveRoot
 );
 
+// Checked totals return false on overflow and set total to zero.
+bool tryGetTotalOriginalSize(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+);
+
+bool tryGetTotalCompressedSize(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+);
+
+bool tryGetTotalSpaceSaved(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+);
+
 #endif

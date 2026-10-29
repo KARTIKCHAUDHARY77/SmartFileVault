@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -495,67 +496,106 @@ bool findArchiveById(
 }
 
 
+static bool checkedArchiveSizeTotal(
+    const std::vector<ArchiveMetadata>& archives,
+    bool originalSize,
+    std::uintmax_t& total
+)
+{
+    const auto maximum =
+        std::numeric_limits<std::uintmax_t>::max();
+
+    total = 0;
+
+    for (const ArchiveMetadata& archive : archives) {
+        const std::uintmax_t size =
+            originalSize ? archive.originalSize
+                         : archive.compressedSize;
+
+        if (size > maximum - total) {
+            total = 0;
+            return false;
+        }
+
+        total += size;
+    }
+
+    return true;
+}
+
+bool tryGetTotalOriginalSize(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+)
+{
+    return checkedArchiveSizeTotal(
+        getAllArchives(archiveRoot), true, total
+    );
+}
+
+bool tryGetTotalCompressedSize(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+)
+{
+    return checkedArchiveSizeTotal(
+        getAllArchives(archiveRoot), false, total
+    );
+}
+
+bool tryGetTotalSpaceSaved(
+    const std::string& archiveRoot,
+    std::uintmax_t& total
+)
+{
+    total = 0;
+    std::uintmax_t original = 0;
+    std::uintmax_t compressed = 0;
+
+    if (!tryGetTotalOriginalSize(archiveRoot, original) ||
+        !tryGetTotalCompressedSize(archiveRoot, compressed)) {
+        return false;
+    }
+
+    if (original > compressed) {
+        total = original - compressed;
+    }
+
+    return true;
+}
+
+// Preserve the existing API. Saturate size totals on overflow;
+// callers requiring explicit error reporting should use tryGet... .
+
 std::uintmax_t getTotalOriginalSize(
     const std::string& archiveRoot
 )
 {
     std::uintmax_t total = 0;
-
-    std::vector<ArchiveMetadata> archives =
-        getAllArchives(
-            archiveRoot
-        );
-
-    for (
-        const ArchiveMetadata& archive :
-        archives
-    ) {
-        total += archive.originalSize;
+    if (!tryGetTotalOriginalSize(archiveRoot, total)) {
+        return std::numeric_limits<std::uintmax_t>::max();
     }
-
     return total;
 }
-
 
 std::uintmax_t getTotalCompressedSize(
     const std::string& archiveRoot
 )
 {
     std::uintmax_t total = 0;
-
-    std::vector<ArchiveMetadata> archives =
-        getAllArchives(
-            archiveRoot
-        );
-
-    for (
-        const ArchiveMetadata& archive :
-        archives
-    ) {
-        total += archive.compressedSize;
+    if (!tryGetTotalCompressedSize(archiveRoot, total)) {
+        return std::numeric_limits<std::uintmax_t>::max();
     }
-
     return total;
 }
-
 
 std::uintmax_t getTotalSpaceSaved(
     const std::string& archiveRoot
 )
 {
-    std::uintmax_t original =
-        getTotalOriginalSize(
-            archiveRoot
-        );
-
-    std::uintmax_t compressed =
-        getTotalCompressedSize(
-            archiveRoot
-        );
-
-    if (original <= compressed) {
+    std::uintmax_t total = 0;
+    if (!tryGetTotalSpaceSaved(archiveRoot, total)) {
         return 0;
     }
-
-    return original - compressed;
+    return total;
 }
