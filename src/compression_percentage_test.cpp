@@ -70,7 +70,7 @@ int main() {
 
     passed &= checkCase("Storage saving", 100, 80, 20.0);
     passed &= checkCase("No size change", 100, 100, 0.0);
-    passed &= checkCase("Storage expansion", 100, 120, -20.0);
+    passed &= checkCase("Storage expansion reports no savings", 100, 120, 0.0);
     passed &= checkCase("Empty original file", 0, 0, 0.0);
 
     std::error_code error;

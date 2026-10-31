@@ -67,9 +67,15 @@ The main objectives of SmartFileVault are:
             |
             v
        File Restoration
+```
+
+---
+
 ## Build and Test (macOS)
 
-Requirements: Clang with C++17 support, Python 3, and zlib.
+Requirements: Clang with C++17 support, Python 3, zlib, and OpenSSL 3
+(`brew install zlib openssl@3`). The commands below assume OpenSSL at
+`/opt/homebrew/opt/openssl@3` (Apple Silicon Homebrew).
 
 ### Build the API test server
 
@@ -92,8 +98,10 @@ clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/restore.cpp \
   src/restore_safety.cpp \
   src/vault_report.cpp \
-  -lz -o /tmp/sfv_api_server
-  ```
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_api_server
+```
 
 ### Start the API server
 
@@ -134,7 +142,9 @@ clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/compression.cpp \
   src/compression_policy.cpp \
   src/file_utils.cpp \
-  -lz -o /tmp/sfv_restore_safety_test
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_restore_safety_test
 
 TEST_DIR="$(mktemp -d /tmp/sfv-safety.XXXXXX)"
 (cd "$TEST_DIR" && /tmp/sfv_restore_safety_test)
@@ -159,10 +169,41 @@ clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/file_utils.cpp \
   src/restore.cpp \
   src/restore_safety.cpp \
-  -lz -o /tmp/sfv_scan_restore_collision_test
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_scan_restore_collision_test
 
 /tmp/sfv_scan_restore_collision_test
 ```
+
+### Run the compression tests
+
+Each command writes its executable to `/tmp`. Set this once:
+
+```bash
+OPENSSL=/opt/homebrew/opt/openssl@3
+```
+
+Then build and run a test (replace `SOURCES` with the row from the table):
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic -Isrc -I"$OPENSSL/include" \
+  SOURCES -L"$OPENSSL/lib" -lcrypto -lz -o /tmp/sfv_test && /tmp/sfv_test
+```
+
+| Test | SOURCES |
+|------|---------|
+| Round trip | `src/compression_test.cpp src/compression.cpp` |
+| Policy | `src/compression_policy_test.cpp src/compression_policy.cpp` |
+| Corruption | `src/compression_corruption_test.cpp src/compression.cpp` |
+| Percentage | `src/compression_percentage_test.cpp src/compression.cpp` |
+| Real-data percentage | `src/compression_real_percentage_test.cpp src/compression.cpp` |
+| Edge file sizes | `src/compression_edge_sizes_test.cpp src/compression.cpp` |
+| Incompressible file | `src/incompressible_file_test.cpp src/archive.cpp src/compression.cpp` |
+| Source change | `src/compression_source_change_test.cpp src/compression.cpp` (also add `-DSFV_ENABLE_TEST_HOOK`) |
+
+`-DSFV_ENABLE_TEST_HOOK` enables a test-only hook in `compression.cpp`.
+Never use it for a normal or production build.
 
 ### Final change checks
 
