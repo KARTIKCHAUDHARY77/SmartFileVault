@@ -1,6 +1,7 @@
 #include "compression.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -206,7 +207,7 @@ int main()
 
     // Same-path decompression must preserve the compressed source.
     const bool samePathDecompression =
-        !decompressFile(archive.string(), archive.string()) &&
+        !decompressFile(archive.string(), archive.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(archive, actualBytes) &&
         actualBytes == archiveBytes;
 
@@ -224,7 +225,7 @@ int main()
     }
 
     const bool existingRestoreDestination =
-        !decompressFile(archive.string(), existingRestored.string()) &&
+        !decompressFile(archive.string(), existingRestored.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(existingRestored, actualBytes) &&
         actualBytes == restoredSentinel;
 
@@ -234,7 +235,7 @@ int main()
     ) && passed;
 
     const bool normalRoundTrip =
-        decompressFile(archive.string(), restored.string()) &&
+        decompressFile(archive.string(), restored.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(restored, actualBytes) &&
         actualBytes == originalBytes;
 
