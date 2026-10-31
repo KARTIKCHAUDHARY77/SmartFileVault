@@ -190,28 +190,28 @@ bool getVaultSummary(
     summary.restoreSafetySpace = 0;
     summary.freeSpace = 0;
 
-    std::vector<ArchiveMetadata> archives =
+    const std::vector<ArchiveMetadata> archives =
         getAllArchives(archiveRoot);
 
-    summary.archiveCount =
-        archives.size();
+    std::uintmax_t originalTotal = 0;
+    std::uintmax_t compressedTotal = 0;
 
-    for (const ArchiveMetadata& archive :
-         archives) {
-
-        summary.originalSize +=
-            archive.originalSize;
-
-        summary.compressedSize +=
-            archive.compressedSize;
+    // Do not publish a partial or wrapped summary when archive totals
+    // cannot be represented by std::uintmax_t.
+    if (!tryGetTotalOriginalSize(archiveRoot, originalTotal) ||
+        !tryGetTotalCompressedSize(archiveRoot, compressedTotal)) {
+        std::cerr
+            << "Vault summary error: archive storage totals overflow.\n";
+        summary = VaultSummary{};
+        return false;
     }
 
-    if (summary.originalSize >
-        summary.compressedSize) {
+    summary.archiveCount = archives.size();
+    summary.originalSize = originalTotal;
+    summary.compressedSize = compressedTotal;
 
-        summary.spaceSaved =
-            summary.originalSize -
-            summary.compressedSize;
+    if (originalTotal > compressedTotal) {
+        summary.spaceSaved = originalTotal - compressedTotal;
     }
 
     summary.restoreSafetySpace =
