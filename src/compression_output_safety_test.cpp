@@ -126,7 +126,7 @@ static bool hasTemporaryOutput(const fs::path& root)
         }
     }
 
-    return error;
+    return static_cast<bool>(error);
 }
 
 int main()
