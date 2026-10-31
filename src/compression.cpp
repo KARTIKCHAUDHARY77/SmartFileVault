@@ -37,7 +37,7 @@ public:
             errno != ENOENT) {
             std::cerr
                 << "Warning: could not remove temporary output '"
-                << temporaryPath_ << "'.\\n";
+                << temporaryPath_ << "'.\n";
         }
     }
 
@@ -55,7 +55,7 @@ public:
             pattern.begin(),
             pattern.end()
         );
-        writablePattern.push_back('\\0');
+        writablePattern.push_back('\0');
 
         descriptor_ = ::mkstemp(writablePattern.data());
 
