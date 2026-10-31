@@ -2,12 +2,29 @@
 #include "compression.h"
 
 #include <filesystem>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <sstream>
 
 namespace fs = std::filesystem;
+
+static bool isUnsignedDecimal(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+
+    for (unsigned char character : value) {
+        if (character < '0' || character > '9') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 static std::string makeArchiveId()
 {
@@ -183,6 +200,14 @@ bool loadArchiveMetadata(
         return false;
     }
 
+    if (!isUnsignedDecimal(originalSizeText) ||
+        !isUnsignedDecimal(compressedSizeText)) {
+        std::cerr
+            << "Metadata error: file sizes must be "
+            << "unsigned decimal integers.\n";
+        return false;
+    }
+
     try {
 
         std::size_t position = 0;
@@ -224,6 +249,15 @@ bool loadArchiveMetadata(
         if (position != percentageText.size()) {
             std::cerr
                 << "Metadata error: invalid compression percentage.\n";
+            return false;
+        }
+
+        if (!std::isfinite(metadata.compressionPercentage) ||
+            metadata.compressionPercentage < 0.0 ||
+            metadata.compressionPercentage > 100.0) {
+            std::cerr
+                << "Metadata error: compression percentage "
+                << "must be finite and between 0 and 100.\n";
             return false;
         }
 
