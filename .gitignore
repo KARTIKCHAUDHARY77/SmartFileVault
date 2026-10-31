@@ -7,3 +7,12 @@ SmartFileVault
 
 # VS Code
 .vscode/
+
+scanner_test
+# Local build output
+/build/
+
+# Temporary API test data
+/api_test_archive/
+/api_test_folder/
+/api_test_restore/
