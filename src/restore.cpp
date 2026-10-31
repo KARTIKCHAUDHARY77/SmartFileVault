@@ -294,7 +294,8 @@ bool restoreArchive(
 
     if (!decompressFile(
             metadata.archivePath,
-            outputPath.string())) {
+            outputPath.string(),
+            metadata.originalSize)) {
 
         std::cerr
             << "Restore error: decompression failed.\n";

@@ -1,6 +1,7 @@
 #ifndef COMPRESSION_H
 #define COMPRESSION_H
 
+#include <cstdint>
 #include <string>
 
 bool compressFile(
@@ -10,7 +11,8 @@ bool compressFile(
 
 bool decompressFile(
     const std::string& compressedPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    std::uintmax_t expectedOutputBytes
 );
 
 bool compressionProvidesBenefit(

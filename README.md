@@ -140,6 +140,21 @@ TEST_DIR="$(mktemp -d /tmp/sfv-safety.XXXXXX)"
 (cd "$TEST_DIR" && /tmp/sfv_restore_safety_test)
 ```
 
+### Run bounded decompression and GZIP integrity tests
+
+Run from the repository root:
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/decompression_limit_test.cpp \
+  src/compression.cpp \
+  -lz -o /tmp/sfv_decompression_limit_test
+
+/tmp/sfv_decompression_limit_test
+```
+
+This test covers the exact decompressed-size limit, empty files, malformed and truncated GZIP streams, checksum corruption, trailing bytes, concatenated GZIP members, and temporary-output cleanup.
+
 ### Run the end-to-end regression test
 
 ```bash

@@ -313,7 +313,11 @@ static bool runRoundTripCase(
             << "PASS: Compression percentage sign\n";
     }
 
-    if (!decompressFile(compressed.string(), restored.string())) {
+    if (!decompressFile(
+            compressed.string(),
+            restored.string(),
+            originalSize
+        )) {
         std::cerr
             << "FAIL: Decompression failed for "
             << filename << '\n';

@@ -252,21 +252,23 @@ bool compressFile(
 
 bool decompressFile(
     const std::string& compressedPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    std::uintmax_t expectedOutputBytes
 ) {
-    gzFile input = gzopen(
-        compressedPath.c_str(),
-        "rb"
+    // Read the GZIP stream directly so we can enforce an exact output bound
+    // and reject trailing bytes or concatenated GZIP members.
+    std::ifstream input(
+        compressedPath,
+        std::ios::binary
     );
 
-    if (input == nullptr) {
+    if (!input) {
         return false;
     }
 
     TemporaryOutputFile temporaryOutput;
 
     if (!temporaryOutput.create(outputPath)) {
-        gzclose(input);
         return false;
     }
 
@@ -276,43 +278,153 @@ bool decompressFile(
     );
 
     if (output == nullptr) {
-        gzclose(input);
         return false;
     }
 
     temporaryOutput.releaseDescriptor();
 
+    z_stream stream{};
+
+    if (inflateInit2(&stream, MAX_WBITS + 16) != Z_OK) {
+        std::fclose(output);
+        return false;
+    }
+
+    char inputBuffer[8192];
+    char outputBuffer[8192];
+
+    std::uintmax_t totalOutputBytes = 0;
     bool success = true;
-    char buffer[8192];
-    int bytesRead = 0;
+    bool streamEnded = false;
+    bool inputEnded = false;
 
-    while ((bytesRead = gzread(
-                input,
-                buffer,
-                sizeof(buffer)
-            )) > 0) {
+    while (success && !streamEnded) {
+        if (stream.avail_in == 0 && !inputEnded) {
+            input.read(
+                inputBuffer,
+                sizeof(inputBuffer)
+            );
 
-        const std::size_t bytesWritten = std::fwrite(
-            buffer,
-            1,
-            static_cast<std::size_t>(bytesRead),
-            output
-        );
+            const std::streamsize inputBytes = input.gcount();
 
-        if (bytesWritten != static_cast<std::size_t>(bytesRead)) {
+            if (input.bad() || inputBytes < 0) {
+                success = false;
+                break;
+            }
+
+            if (input.eof()) {
+                inputEnded = true;
+            }
+
+            if (inputBytes == 0) {
+                success = false;
+                break;
+            }
+
+            stream.next_in =
+                reinterpret_cast<Bytef*>(inputBuffer);
+
+            stream.avail_in =
+                static_cast<uInt>(inputBytes);
+        }
+
+        stream.next_out =
+            reinterpret_cast<Bytef*>(outputBuffer);
+
+        stream.avail_out =
+            static_cast<uInt>(sizeof(outputBuffer));
+
+        const uInt inputBeforeInflate = stream.avail_in;
+
+        const int inflateResult =
+            inflate(&stream, Z_NO_FLUSH);
+
+        const std::size_t producedBytes =
+            sizeof(outputBuffer) - stream.avail_out;
+
+        // This subtraction is safe because totalOutputBytes is only
+        // increased after checking it against the expected bound.
+        if (producedBytes >
+            expectedOutputBytes - totalOutputBytes) {
+            success = false;
+            break;
+        }
+
+        if (producedBytes > 0) {
+            const std::size_t bytesWritten =
+                std::fwrite(
+                    outputBuffer,
+                    1,
+                    producedBytes,
+                    output
+                );
+
+            if (bytesWritten != producedBytes) {
+                success = false;
+                break;
+            }
+
+            totalOutputBytes +=
+                static_cast<std::uintmax_t>(producedBytes);
+        }
+
+        if (inflateResult == Z_STREAM_END) {
+            streamEnded = true;
+
+            // SmartFileVault writes one GZIP member per archive. Reject
+            // any unread input in this buffer, any following bytes, and
+            // therefore concatenated members or trailing garbage.
+            if (stream.avail_in != 0) {
+                success = false;
+                break;
+            }
+
+            const int nextByte = input.peek();
+
+            if (nextByte != std::char_traits<char>::eof() ||
+                input.bad() ||
+                !input.eof()) {
+                success = false;
+            }
+
+            break;
+        }
+
+        if (inflateResult != Z_OK &&
+            inflateResult != Z_BUF_ERROR) {
+            // Includes invalid GZIP headers, invalid DEFLATE data,
+            // checksum failures, and malformed trailers.
+            success = false;
+            break;
+        }
+
+        if (inputEnded &&
+            stream.avail_in == 0 &&
+            producedBytes == 0) {
+            // No more compressed input is available and the GZIP end
+            // marker/trailer was not reached.
+            success = false;
+            break;
+        }
+
+        if (inputBeforeInflate == stream.avail_in &&
+            producedBytes == 0) {
+            if (stream.avail_in == 0 && !inputEnded) {
+                continue;
+            }
+
             success = false;
             break;
         }
     }
 
-    int errorCode = Z_OK;
-    gzerror(input, &errorCode);
-
-    if (bytesRead < 0 || errorCode != Z_OK) {
+    if (inflateEnd(&stream) != Z_OK) {
         success = false;
     }
 
-    if (gzclose(input) != Z_OK) {
+    // The metadata size is an exact expectation, not just a hint.
+    // Reject short output as well as output that exceeds the bound.
+    if (!streamEnded || totalOutputBytes != expectedOutputBytes) {
         success = false;
     }
 
@@ -324,11 +436,10 @@ bool decompressFile(
         success = false;
     }
 
-    // The destination name appears only after decompression and all stream
-    // operations complete successfully. Existing files are never replaced.
+    // Publish only a complete, valid, size-matched single-member GZIP
+    // stream. On every failure the RAII owner removes the temporary file.
     return success && temporaryOutput.publish();
 }
-
 bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath

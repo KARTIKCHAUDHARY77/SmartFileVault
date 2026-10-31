@@ -180,7 +180,8 @@ bool archiveAndRemoveOriginal(
     // Decompress the new archive into a temporary verification file.
     if (!decompressFile(
             metadata.archivePath,
-            verifyPath.string()
+            verifyPath.string(),
+            metadata.originalSize
         )) {
         removeGeneratedPath(
             verifyPath,
