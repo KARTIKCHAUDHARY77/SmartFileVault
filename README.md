@@ -67,3 +67,50 @@ The main objectives of SmartFileVault are:
             |
             v
        File Restoration
+
+---
+
+## Build Requirements
+
+SmartFileVault requires:
+
+- C++17 compatible compiler
+- zlib for GZIP compression and decompression
+- OpenSSL 3 for SHA-256 file integrity verification
+
+### macOS Dependencies (Apple Silicon)
+
+Install using Homebrew:
+
+```bash
+brew install zlib openssl@3
+```
+
+The commands below assume OpenSSL is at `/opt/homebrew/opt/openssl@3`.
+
+### Compile and Run the Compression Tests
+
+Test executables are written to `/tmp` so they do not end up in the repository.
+
+```bash
+OPENSSL=/opt/homebrew/opt/openssl@3
+
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+-I"$OPENSSL/include" \
+src/compression_test.cpp src/compression.cpp \
+-L"$OPENSSL/lib" -lcrypto -lz \
+-o /tmp/sfv_compression_test && /tmp/sfv_compression_test
+```
+
+Other compression tests use the same command with different sources:
+
+| Test | Sources |
+|------|---------|
+| Compression policy | `src/compression_policy_test.cpp src/compression_policy.cpp` |
+| Corruption handling | `src/compression_corruption_test.cpp src/compression.cpp` |
+| Compression percentage | `src/compression_percentage_test.cpp src/compression.cpp` |
+| Incompressible file | `src/incompressible_file_test.cpp src/archive.cpp src/compression.cpp` |
+| Source change during compression | `src/compression_source_change_test.cpp src/compression.cpp` (add `-DSFV_ENABLE_TEST_HOOK`) |
+
+`-DSFV_ENABLE_TEST_HOOK` enables a test-only hook in `compression.cpp`.
+Never use it for a normal or production build.

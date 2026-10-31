@@ -75,18 +75,12 @@ bool isCompressionResistant(
     return compressionResistantExtensions.find(extension)
            != compressionResistantExtensions.end();
 }
-
 CompressionDecision getCompressionDecision(
     const std::string& filePath
 ) {
     if (!fs::exists(filePath) ||
         !fs::is_regular_file(filePath)) {
-
         return CompressionDecision::SkipInvalidFile;
-    }
-
-    if (isCompressionResistant(filePath)) {
-        return CompressionDecision::SkipAlreadyCompressed;
     }
 
     return CompressionDecision::Compress;
