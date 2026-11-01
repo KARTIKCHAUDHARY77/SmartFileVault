@@ -2,13 +2,75 @@
 #include "compression.h"
 
 #include <filesystem>
+#include <cerrno>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <sstream>
 #include <sys/stat.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
+
+static bool syncFileDescriptor(int descriptor)
+{
+#if defined(__APPLE__) && defined(F_FULLFSYNC)
+    if (::fcntl(descriptor, F_FULLFSYNC) == 0) {
+        return true;
+    }
+
+    if (errno != EINVAL && errno != ENOTSUP && errno != ENOTTY) {
+        return false;
+    }
+#endif
+
+    return ::fsync(descriptor) == 0;
+}
+
+static bool syncFilePath(const fs::path& path)
+{
+    const int descriptor = ::open(path.c_str(), O_WRONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = syncFileDescriptor(descriptor);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
+
+static bool syncDirectoryPath(const fs::path& path)
+{
+    const int descriptor = ::open(path.c_str(), O_RDONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = (::fsync(descriptor) == 0);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
 
 static bool isUnsignedDecimal(const std::string& value)
 {
@@ -84,7 +146,34 @@ bool saveArchiveMetadata(
         file << metadata.originalPermissions << '\n';
     }
 
-    return file.good();
+    file.flush();
+    if (!file.good()) {
+        return false;
+    }
+
+    file.close();
+    if (file.fail()) {
+        return false;
+    }
+
+    // The metadata must reach stable storage before archiveAndRemoveOriginal
+    // is allowed to remove the only source copy.
+    if (!syncFilePath(fs::path(metadataPath))) {
+        std::cerr << "Metadata error: could not sync metadata file.\n";
+        return false;
+    }
+
+    fs::path parent = fs::path(metadataPath).parent_path();
+    if (parent.empty()) {
+        parent = ".";
+    }
+
+    if (!syncDirectoryPath(parent)) {
+        std::cerr << "Metadata error: could not sync metadata directory.\n";
+        return false;
+    }
+
+    return true;
 }
 
 bool loadArchiveMetadata(
@@ -361,6 +450,20 @@ bool createArchive(
     );
 
     if (error) {
+        return false;
+    }
+
+    // Persist the archive's directory entries before publishing data inside
+    // its compressed/metadata subdirectories.
+    fs::path archiveRootPath(archiveRoot);
+    fs::path archiveRootParent = archiveRootPath.parent_path();
+    if (archiveRootParent.empty()) {
+        archiveRootParent = ".";
+    }
+
+    if (!syncDirectoryPath(archiveRootParent) ||
+        !syncDirectoryPath(archiveRootPath)) {
+        std::cerr << "Archive error: could not sync archive directories.\n";
         return false;
     }
 
