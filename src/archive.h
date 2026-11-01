@@ -37,6 +37,14 @@ bool saveArchiveMetadata(
     bool* publishedPathMayRemain = nullptr
 );
 
+#ifdef SFV_ENABLE_TEST_HOOKS
+void setArchiveMetadataPublicationFailureInjection(
+    bool failFileSync,
+    bool failDirectorySync,
+    bool failRollbackUnlink
+);
+#endif
+
 bool loadArchiveMetadata(
     const std::string& metadataPath,
     ArchiveMetadata& metadata
