@@ -208,7 +208,7 @@ public:
         } else {
             std::cerr
                 << "Warning: completed output is durable, but temporary "
-                << "name cleanup failed and will be retried.\\n";
+                << "name cleanup failed and will be retried.\n";
         }
 
         return true;
