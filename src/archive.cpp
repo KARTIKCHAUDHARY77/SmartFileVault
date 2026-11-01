@@ -6,8 +6,24 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
+
+static bool isUnsignedDecimal(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+
+    for (unsigned char character : value) {
+        if (character < '0' || character > '9') {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 static std::string makeArchiveId()
 {
@@ -64,6 +80,9 @@ bool saveArchiveMetadata(
     file << metadata.compressedSize << '\n';
     file << metadata.compressionPercentage << '\n';
     file << metadata.archivedAt << '\n';
+    if (metadata.hasOriginalPermissions) {
+        file << metadata.originalPermissions << '\n';
+    }
 
     return file.good();
 }
@@ -88,6 +107,11 @@ bool loadArchiveMetadata(
     std::string compressedSizeText;
     std::string percentageText;
     std::string archivedAtText;
+    std::string originalPermissionsText;
+    bool hasOriginalPermissionsLine = false;
+
+    metadata.originalPermissions = 0600;
+    metadata.hasOriginalPermissions = false;
 
     if (!std::getline(file, metadata.archiveId)) {
         std::cerr << "Metadata error: archiveId missing.\n";
@@ -129,6 +153,14 @@ bool loadArchiveMetadata(
         return false;
     }
 
+    if (std::getline(file, originalPermissionsText)) {
+        hasOriginalPermissionsLine = true;
+    }
+    else if (!file.eof()) {
+        std::cerr << "Metadata error: could not read permissions.\n";
+        return false;
+    }
+
     auto cleanLine = [](std::string& value)
     {
         // Remove Windows-style carriage return if present.
@@ -162,6 +194,9 @@ bool loadArchiveMetadata(
     cleanLine(compressedSizeText);
     cleanLine(percentageText);
     cleanLine(archivedAtText);
+    if (hasOriginalPermissionsLine) {
+        cleanLine(originalPermissionsText);
+    }
 
     if (metadata.archiveId.empty()) {
         std::cerr << "Metadata error: archiveId is empty.\n";
@@ -240,6 +275,29 @@ bool loadArchiveMetadata(
                 << "Metadata error: invalid archive timestamp.\n";
             return false;
         }
+
+        if (hasOriginalPermissionsLine) {
+            if (!isUnsignedDecimal(originalPermissionsText)) {
+                std::cerr
+                    << "Metadata error: invalid original permissions.\n";
+                return false;
+            }
+
+            position = 0;
+            const unsigned long permissions =
+                std::stoul(originalPermissionsText, &position);
+
+            if (position != originalPermissionsText.size() ||
+                permissions > 0777UL) {
+                std::cerr
+                    << "Metadata error: original permissions are out of range.\n";
+                return false;
+            }
+
+            metadata.originalPermissions =
+                static_cast<std::uint32_t>(permissions);
+            metadata.hasOriginalPermissions = true;
+        }
     }
     catch (const std::exception& error) {
 
@@ -265,6 +323,20 @@ bool createArchive(
 
         return false;
     }
+
+    metadata.originalPermissions = 0600;
+    metadata.hasOriginalPermissions = false;
+
+    struct stat inputStatus {};
+    if (::stat(inputPath.c_str(), &inputStatus) != 0) {
+        std::cerr << "Archive error: could not read original permissions.\n";
+        return false;
+    }
+
+    // Preserve only ordinary rwx bits. Special bits are not restored.
+    metadata.originalPermissions =
+        static_cast<std::uint32_t>(inputStatus.st_mode & 0777);
+    metadata.hasOriginalPermissions = true;
 
     std::string compressedFolder =
         archiveRoot + "/compressed";
