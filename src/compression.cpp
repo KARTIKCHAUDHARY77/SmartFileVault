@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -17,6 +18,45 @@
 #include <zlib.h>
 
 namespace fs = std::filesystem;
+
+static bool syncFileDescriptor(int descriptor)
+{
+#if defined(__APPLE__) && defined(F_FULLFSYNC)
+    if (::fcntl(descriptor, F_FULLFSYNC) == 0) {
+        return true;
+    }
+
+    // Some filesystems do not implement F_FULLFSYNC. Use fsync as the
+    // portable fallback only for an unsupported-operation response.
+    if (errno != EINVAL && errno != ENOTSUP && errno != ENOTTY) {
+        return false;
+    }
+#endif
+
+    return ::fsync(descriptor) == 0;
+}
+
+static bool syncDirectoryPath(const fs::path& directory)
+{
+    const int descriptor = ::open(directory.c_str(), O_RDONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = (::fsync(descriptor) == 0);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
 
 // Build output in a unique temporary file beside the destination. The final
 // hard-link publication is atomic and fails rather than replacing an existing
@@ -32,6 +72,9 @@ public:
     ~TemporaryOutputFile() {
         if (descriptor_ >= 0) {
             ::close(descriptor_);
+        }
+        if (syncDescriptor_ >= 0) {
+            ::close(syncDescriptor_);
         }
 
         if (!temporaryPath_.empty() &&
@@ -67,11 +110,52 @@ public:
 
         temporaryPath_ = writablePattern.data();
         destinationPath_ = destinationPath;
+
+        // Keep a duplicate descriptor so the completed stream can be closed
+        // by zlib/stdio before its data is synchronized to stable storage.
+        syncDescriptor_ = ::dup(descriptor_);
+        if (syncDescriptor_ < 0) {
+            return false;
+        }
+
+        const int descriptorFlags = ::fcntl(syncDescriptor_, F_GETFD);
+        if (descriptorFlags < 0 ||
+            ::fcntl(
+                syncDescriptor_,
+                F_SETFD,
+                descriptorFlags | FD_CLOEXEC
+            ) != 0) {
+            return false;
+        }
+
         return true;
     }
 
     int descriptor() const {
         return descriptor_;
+    }
+
+    bool syncContents() {
+        if (syncDescriptor_ < 0) {
+            return false;
+        }
+
+        bool success = syncFileDescriptor(syncDescriptor_);
+        int savedError = errno;
+
+        if (::close(syncDescriptor_) != 0 && success) {
+            success = false;
+            savedError = errno;
+        }
+        syncDescriptor_ = -1;
+
+        if (!success) {
+            errno = savedError;
+            return false;
+        }
+
+        contentsSynchronized_ = true;
+        return true;
     }
 
     // Call only after gzdopen() or fdopen() successfully takes ownership.
@@ -80,7 +164,9 @@ public:
     }
 
     bool publish() {
-        if (temporaryPath_.empty() || destinationPath_.empty()) {
+        if (temporaryPath_.empty() || destinationPath_.empty() ||
+            !contentsSynchronized_) {
+            errno = EINVAL;
             return false;
         }
 
@@ -93,10 +179,36 @@ public:
             return false;
         }
 
-        // The destination is now complete. If temporary-name cleanup fails,
-        // keep the valid destination and let the destructor retry cleanup.
-        if (::unlink(temporaryPath_.c_str()) == 0) {
+        fs::path parent = fs::path(destinationPath_).parent_path();
+        if (parent.empty()) {
+            parent = ".";
+        }
+
+        // Persist the destination directory entry before reporting success.
+        // If this fails, attempt to remove the published name; callers will
+        // preserve the original source because publication reports failure.
+        if (!syncDirectoryPath(parent)) {
+            const int syncError = errno;
+            if (::unlink(destinationPath_.c_str()) == 0) {
+                (void)syncDirectoryPath(parent);
+            }
+            errno = syncError;
+            return false;
+        }
+
+        // The destination is now durable. Persist temporary-name removal too;
+        // a failure here can leave only a harmless stale .sfv-output-* alias.
+        if (::unlink(temporaryPath_.c_str()) == 0 || errno == ENOENT) {
             temporaryPath_.clear();
+            if (!syncDirectoryPath(parent)) {
+                std::cerr
+                    << "Warning: completed output is durable, but temporary "
+                    << "name cleanup may reappear after a crash.\\n";
+            }
+        } else {
+            std::cerr
+                << "Warning: completed output is durable, but temporary "
+                << "name cleanup failed and will be retried.\\n";
         }
 
         return true;
@@ -104,7 +216,9 @@ public:
 
 private:
     int descriptor_ = -1;
-    std::string temporaryPath_;
+    int syncDescriptor_ = -1;
+    bool contentsSynchronized_ = false;
+    std::string temporaryPath_
     std::string destinationPath_;
 };
 
@@ -246,8 +360,13 @@ bool compressFile(
         success = false;
     }
 
-    // Publish only a fully closed archive. The destination is never opened
-    // with truncation, and an existing destination is never overwritten.
+    // Publish only a fully closed and synchronized archive. The destination
+    // is never opened with truncation or allowed to overwrite an existing file.
+    if (success && !temporaryOutput.syncContents()) {
+        std::cerr << "Compression error: could not sync completed archive.\\n";
+        success = false;
+    }
+
     return success && temporaryOutput.publish();
 }
 
@@ -337,8 +456,14 @@ bool decompressFile(
         success = false;
     }
 
-    // The destination name appears only after decompression and all stream
-    // operations complete successfully. Existing files are never replaced.
+    if (success && !temporaryOutput.syncContents()) {
+        std::cerr << "Decompression error: could not sync completed output.\\n";
+        success = false;
+    }
+
+    // The destination name appears only after decompression, mode application,
+    // stream close, and stable-storage synchronization complete successfully.
+    // Existing files are never replaced.
     return success && temporaryOutput.publish();
 }
 
