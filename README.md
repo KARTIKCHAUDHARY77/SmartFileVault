@@ -151,7 +151,7 @@ clang++ -std=c++17 -Wall -Wextra -pedantic \
   -lz -o /tmp/sfv_decompression_limit_test
 /tmp/sfv_decompression_limit_test
 
-clang++ -std=c++17 -Wall -Wextra -pedantic \
+clang++ -std=c++17 -Wall -Wextra -pedantic -DSFV_ENABLE_TEST_HOOKS \
   src/archive_metadata_validation_test.cpp src/archive.cpp src/compression.cpp \
   -lz -o /tmp/sfv_archive_metadata_validation_test
 /tmp/sfv_archive_metadata_validation_test
