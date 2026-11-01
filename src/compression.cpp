@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <unistd.h>
+#include <sys/stat.h>
 #include <zlib.h>
 
 namespace fs = std::filesystem;
@@ -252,7 +253,8 @@ bool compressFile(
 
 bool decompressFile(
     const std::string& compressedPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    unsigned int outputPermissions
 ) {
     gzFile input = gzopen(
         compressedPath.c_str(),
@@ -317,6 +319,17 @@ bool decompressFile(
     }
 
     if (std::fflush(output) != 0) {
+        success = false;
+    }
+
+    // Keep the staging file private (0600) while it is being written. Apply
+    // the intended restore mode only after all bytes have been flushed and
+    // immediately before publication.
+    if (success &&
+        ::fchmod(
+            ::fileno(output),
+            static_cast<mode_t>(outputPermissions & 0777U)
+        ) != 0) {
         success = false;
     }
 
