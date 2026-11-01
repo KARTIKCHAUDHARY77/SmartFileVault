@@ -2,12 +2,15 @@
 #include "compression.h"
 
 #include <cerrno>
+#include <array>
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <openssl/evp.h>
 #include <string>
 #include <stdlib.h>
 #include <system_error>
@@ -18,6 +21,17 @@
 #include <zlib.h>
 
 namespace fs = std::filesystem;
+
+
+#ifdef SFV_ENABLE_TEST_HOOK
+static void (*compressionTestHook)() = nullptr;
+
+void setCompressionTestHook(void (*hook)()) {
+    compressionTestHook = hook;
+}
+#endif
+
+using Sha256Hash = std::array<unsigned char, 32>;
 
 static bool syncFileDescriptor(int descriptor)
 {
@@ -230,12 +244,11 @@ static bool getFileState(
     const std::string& filePath,
     FileState& state
 ) {
-    if (!fs::exists(filePath) ||
-        !fs::is_regular_file(filePath)) {
+    std::error_code error;
+
+    if (!fs::is_regular_file(filePath, error) || error) {
         return false;
     }
-
-    std::error_code error;
 
     state.size = fs::file_size(filePath, error);
 
@@ -243,14 +256,9 @@ static bool getFileState(
         return false;
     }
 
-    state.modifiedTime =
-        fs::last_write_time(filePath, error);
+    state.modifiedTime = fs::last_write_time(filePath, error);
 
-    if (error) {
-        return false;
-    }
-
-    return true;
+    return !error;
 }
 
 static bool fileChanged(
@@ -274,62 +282,38 @@ static bool fileChanged(
     return false;
 }
 
-bool compressFile(
-    const std::string& inputPath,
-    const std::string& outputPath
+static bool hashFile(
+    const std::string& filePath,
+    Sha256Hash& hash
 ) {
-    FileState before;
-
-    if (!getFileState(inputPath, before)) {
-        return false;
-    }
-
-    std::ifstream input(
-        inputPath,
-        std::ios::binary
-    );
+    std::ifstream input(filePath, std::ios::binary);
 
     if (!input) {
         return false;
     }
 
-    TemporaryOutputFile temporaryOutput;
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
 
-    if (!temporaryOutput.create(outputPath)) {
+    if (context == nullptr) {
         return false;
     }
 
-    gzFile output = gzdopen(
-        temporaryOutput.descriptor(),
-        "wb"
-    );
+    bool success =
+        EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
 
-    if (output == nullptr) {
-        return false;
-    }
-
-    temporaryOutput.releaseDescriptor();
-
-    bool success = true;
     char buffer[8192];
 
     while (success) {
-        input.read(
-            buffer,
-            sizeof(buffer)
-        );
+        input.read(buffer, sizeof(buffer));
 
-        const std::streamsize bytesRead =
-            input.gcount();
+        const std::streamsize bytesRead = input.gcount();
 
         if (bytesRead > 0) {
-            const int written = gzwrite(
-                output,
-                buffer,
-                static_cast<unsigned int>(bytesRead)
-            );
-
-            if (written != bytesRead) {
+            if (EVP_DigestUpdate(
+                    context,
+                    buffer,
+                    static_cast<std::size_t>(bytesRead)
+                ) != 1) {
                 success = false;
                 break;
             }
@@ -350,23 +334,189 @@ bool compressFile(
         }
     }
 
-    if (gzclose(output) != Z_OK) {
+    unsigned int hashLength = 0;
+
+    if (success) {
+        success =
+            EVP_DigestFinal_ex(
+                context,
+                hash.data(),
+                &hashLength
+            ) == 1 &&
+            hashLength == static_cast<unsigned int>(hash.size());
+    }
+
+    EVP_MD_CTX_free(context);
+    return success;
+}
+
+bool compressFile(
+    const std::string& inputPath,
+    const std::string& outputPath
+) {
+    // Prevent attempts to compress a file onto itself.
+    try {
+        if (fs::absolute(inputPath).lexically_normal() ==
+            fs::absolute(outputPath).lexically_normal()) {
+            return false;
+        }
+    } catch (const fs::filesystem_error&) {
+        return false;
+    }
+
+    FileState before;
+
+    if (!getFileState(inputPath, before)) {
+        return false;
+    }
+
+    // Hash the original source before compression begins.
+    Sha256Hash hashBefore{};
+
+    if (!hashFile(inputPath, hashBefore)) {
+        return false;
+    }
+
+    std::ifstream input(inputPath, std::ios::binary);
+
+    if (!input) {
+        return false;
+    }
+
+    // Use a private temporary file beside the destination.
+    TemporaryOutputFile temporaryOutput;
+
+    if (!temporaryOutput.create(outputPath)) {
+        return false;
+    }
+
+    EVP_MD_CTX* context = EVP_MD_CTX_new();
+
+    if (context == nullptr) {
+        return false;
+    }
+
+    bool success =
+        EVP_DigestInit_ex(context, EVP_sha256(), nullptr) == 1;
+
+    gzFile output = nullptr;
+
+    if (success) {
+        output = gzdopen(
+            temporaryOutput.descriptor(),
+            "wb"
+        );
+
+        if (output == nullptr) {
+            success = false;
+        } else {
+            temporaryOutput.releaseDescriptor();
+        }
+    }
+
+#ifdef SFV_ENABLE_TEST_HOOK
+    // The regression test changes the source after the initial hash
+    // but before the source is read for compression.
+    if (success && compressionTestHook != nullptr) {
+        compressionTestHook();
+    }
+#endif
+
+    char buffer[8192];
+
+    while (success) {
+        input.read(buffer, sizeof(buffer));
+
+        const std::streamsize bytesRead = input.gcount();
+
+        if (bytesRead > 0) {
+            // Hash exactly the bytes being compressed.
+            if (EVP_DigestUpdate(
+                    context,
+                    buffer,
+                    static_cast<std::size_t>(bytesRead)
+                ) != 1) {
+                success = false;
+                break;
+            }
+
+            const int written = gzwrite(
+                output,
+                buffer,
+                static_cast<unsigned int>(bytesRead)
+            );
+
+            if (written != static_cast<int>(bytesRead)) {
+                success = false;
+                break;
+            }
+        }
+
+        if (input.bad()) {
+            success = false;
+            break;
+        }
+
+        if (input.eof()) {
+            break;
+        }
+
+        if (!input) {
+            success = false;
+            break;
+        }
+    }
+
+    Sha256Hash hashDuring{};
+    unsigned int hashLength = 0;
+
+    if (success) {
+        success =
+            EVP_DigestFinal_ex(
+                context,
+                hashDuring.data(),
+                &hashLength
+            ) == 1 &&
+            hashLength == static_cast<unsigned int>(hashDuring.size());
+    }
+
+    EVP_MD_CTX_free(context);
+
+    // Finish and close GZIP before synchronizing the temporary file.
+    if (output != nullptr && gzclose(output) != Z_OK) {
         success = false;
     }
 
-    // The source file may have changed while compression was taking place.
-    if (success && fileChanged(before, inputPath)) {
+    // Hash the source again after compression.
+    Sha256Hash hashAfter{};
+
+    if (!hashFile(inputPath, hashAfter)) {
         success = false;
     }
 
-    // Synchronize only after zlib has closed the completed archive.
-    if (success && !temporaryOutput.syncContents()) {
+    // Source content must be identical before, during and after compression.
+    if (success &&
+        (hashBefore != hashDuring ||
+         hashDuring != hashAfter)) {
+        success = false;
+    }
+
+    // Keep the additional size and modification-time check.
+    if (fileChanged(before, inputPath)) {
+        success = false;
+    }
+
+    if (!success) {
+        return false;
+    }
+
+    if (!temporaryOutput.syncContents()) {
         std::cerr << "Compression error: could not sync completed archive.\n";
-        success = false;
+        return false;
     }
 
-    // Existing destinations are never overwritten.
-    return success && temporaryOutput.publish();
+    // Atomically publish without overwriting an existing destination.
+    return temporaryOutput.publish();
 }
 
 bool decompressFile(
@@ -582,54 +732,70 @@ bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath
 ) {
-    if (!fs::exists(originalPath) ||
-        !fs::exists(compressedPath)) {
+    std::error_code error;
+
+    if (!fs::is_regular_file(originalPath, error) || error) {
         return false;
     }
 
-    if (!fs::is_regular_file(originalPath) ||
-        !fs::is_regular_file(compressedPath)) {
+    error.clear();
+
+    if (!fs::is_regular_file(compressedPath, error) || error) {
         return false;
     }
 
-    return fs::file_size(compressedPath) <
-           fs::file_size(originalPath);
+    const std::uintmax_t originalSize =
+        fs::file_size(originalPath, error);
+
+    if (error) {
+        return false;
+    }
+
+    const std::uintmax_t compressedSize =
+        fs::file_size(compressedPath, error);
+
+    if (error) {
+        return false;
+    }
+
+    return compressedSize < originalSize;
 }
 
 double getCompressionPercentage(
     const std::string& originalPath,
     const std::string& compressedPath
 ) {
-    if (!fs::exists(originalPath) ||
-        !fs::exists(compressedPath)) {
+    std::error_code error;
+
+    if (!fs::is_regular_file(originalPath, error) || error) {
         return 0.0;
     }
 
-    std::uintmax_t originalSize =
-        fs::file_size(originalPath);
+    error.clear();
 
-    std::uintmax_t compressedSize =
-        fs::file_size(compressedPath);
-
-    if (originalSize == 0) {
+    if (!fs::is_regular_file(compressedPath, error) || error) {
         return 0.0;
     }
 
-    // Calculate the difference without unsigned
-    // underflow when the compressed file is larger.
-    double savedBytes;
+    const std::uintmax_t originalSize =
+        fs::file_size(originalPath, error);
 
-    if (originalSize >= compressedSize) {
-        savedBytes = static_cast<double>(
-            originalSize - compressedSize
-        );
-    } else {
-        savedBytes = -static_cast<double>(
-            compressedSize - originalSize
-        );
+    if (error || originalSize == 0) {
+        return 0.0;
     }
 
-    return (savedBytes /
-            static_cast<double>(originalSize))
-           * 100.0;
+    const std::uintmax_t compressedSize =
+        fs::file_size(compressedPath, error);
+
+    if (error || compressedSize >= originalSize) {
+        return 0.0;
+    }
+
+    const std::uintmax_t savedBytes =
+        originalSize - compressedSize;
+
+    return (
+        static_cast<double>(savedBytes) /
+        static_cast<double>(originalSize)
+    ) * 100.0;
 }
