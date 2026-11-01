@@ -41,6 +41,36 @@ static bool writeMetadata(
     return !output.fail();
 }
 
+static bool hasMetadataTemporaryAlias(const fs::path& root)
+{
+    std::error_code error;
+
+    for (fs::directory_iterator it(root, error);
+         !error && it != fs::directory_iterator();
+         it.increment(error)) {
+        const std::string name = it->path().filename().string();
+        if (name.find(".sfv-meta-") != std::string::npos) {
+            return true;
+        }
+    }
+
+    return static_cast<bool>(error);
+}
+
+static bool readTextFile(const fs::path& path, std::string& contents)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return false;
+    }
+
+    contents.assign(
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+    );
+    return !input.bad();
+}
+
 static bool rejected(
     const fs::path& root,
     const std::string& name,
@@ -127,6 +157,137 @@ int main()
         << (validPassed ? "PASS: " : "FAIL: ")
         << "valid ASCII decimal sizes accepted\n";
     passed = validPassed && passed;
+
+#ifdef SFV_ENABLE_TEST_HOOKS
+    ArchiveMetadata publicationMetadata {};
+    publicationMetadata.archiveId = "SFV-METADATA-PUBLICATION-1";
+    publicationMetadata.originalName = "sample.txt";
+    publicationMetadata.originalPath = "/legacy/sample.txt";
+    publicationMetadata.archivePath = "/legacy/sample.txt.gz";
+    publicationMetadata.originalSize = 5;
+    publicationMetadata.compressedSize = 3;
+    publicationMetadata.compressionPercentage = 40.0;
+    publicationMetadata.archivedAt = 1730000000;
+
+    const fs::path fileSyncFailurePath = root / "file-sync-failure.meta";
+    bool publicationMayRemain = false;
+    setArchiveMetadataPublicationFailureInjection(true, false, false);
+    const bool fileSyncFailureRejected =
+        !saveArchiveMetadata(
+            fileSyncFailurePath.string(),
+            publicationMetadata,
+            &publicationMayRemain
+        ) &&
+        !publicationMayRemain &&
+        !fs::exists(fileSyncFailurePath) &&
+        !hasMetadataTemporaryAlias(root);
+    std::cout
+        << (fileSyncFailureRejected ? "PASS: " : "FAIL: ")
+        << "metadata file-sync failure removes partial temporary record\\n";
+    passed = fileSyncFailureRejected && passed;
+
+    const fs::path directorySyncFailurePath = root / "directory-sync-failure.meta";
+    publicationMayRemain = false;
+    setArchiveMetadataPublicationFailureInjection(false, true, false);
+    const bool directorySyncRollback =
+        !saveArchiveMetadata(
+            directorySyncFailurePath.string(),
+            publicationMetadata,
+            &publicationMayRemain
+        ) &&
+        !publicationMayRemain &&
+        !fs::exists(directorySyncFailurePath) &&
+        !hasMetadataTemporaryAlias(root);
+    std::cout
+        << (directorySyncRollback ? "PASS: " : "FAIL: ")
+        << "metadata directory-sync failure rolls back and cleans the record\\n";
+    passed = directorySyncRollback && passed;
+
+    const fs::path rollbackFailurePath = root / "rollback-failure.meta";
+    publicationMayRemain = false;
+    setArchiveMetadataPublicationFailureInjection(false, true, true);
+    const bool rollbackFailureReturned =
+        !saveArchiveMetadata(
+            rollbackFailurePath.string(),
+            publicationMetadata,
+            &publicationMayRemain
+        ) &&
+        publicationMayRemain &&
+        fs::exists(rollbackFailurePath) &&
+        !hasMetadataTemporaryAlias(root);
+
+    ArchiveMetadata retainedMetadata {};
+    const bool retainedRecordLoads =
+        rollbackFailureReturned &&
+        loadArchiveMetadata(rollbackFailurePath.string(), retainedMetadata) &&
+        retainedMetadata.archiveId == publicationMetadata.archiveId &&
+        retainedMetadata.originalSize == publicationMetadata.originalSize &&
+        retainedMetadata.compressedSize == publicationMetadata.compressedSize;
+
+    std::cout
+        << (retainedRecordLoads ? "PASS: " : "FAIL: ")
+        << "rollback-unlink failure reports and retains the complete metadata record\\n";
+    passed = retainedRecordLoads && passed;
+
+    std::error_code publicationCleanupError;
+    fs::remove(rollbackFailurePath, publicationCleanupError);
+    if (publicationCleanupError) {
+        std::cerr
+            << "FAIL: could not clean retained rollback fixture: "
+            << publicationCleanupError.message() << '\\n';
+        passed = false;
+    }
+
+    const fs::path collisionPath = root / "existing.meta";
+    const std::string collisionSentinel = "existing metadata must remain unchanged\\n";
+    {
+        std::ofstream sentinel(collisionPath, std::ios::binary);
+        sentinel << collisionSentinel;
+        sentinel.close();
+        if (sentinel.fail()) {
+            std::cerr << "FAIL: could not write metadata collision sentinel\\n";
+            passed = false;
+        }
+    }
+
+    std::string collisionAfter;
+    publicationMayRemain = false;
+    const bool collisionNotOverwritten =
+        !publicationMayRemain &&
+        !saveArchiveMetadata(
+            collisionPath.string(),
+            publicationMetadata,
+            &publicationMayRemain
+        ) &&
+        !publicationMayRemain &&
+        readTextFile(collisionPath, collisionAfter) &&
+        collisionAfter == collisionSentinel &&
+        !hasMetadataTemporaryAlias(root);
+    std::cout
+        << (collisionNotOverwritten ? "PASS: " : "FAIL: ")
+        << "metadata publication does not overwrite an existing record and removes its temp alias\\n";
+    passed = collisionNotOverwritten && passed;
+
+    const fs::path successfulPublicationPath = root / "successful-publication.meta";
+    const bool successfulPublication =
+        saveArchiveMetadata(
+            successfulPublicationPath.string(),
+            publicationMetadata
+        ) &&
+        !hasMetadataTemporaryAlias(root);
+    ArchiveMetadata successfulMetadata {};
+    const bool successfulPublicationLoads =
+        successfulPublication &&
+        loadArchiveMetadata(
+            successfulPublicationPath.string(),
+            successfulMetadata
+        ) &&
+        successfulMetadata.archiveId == publicationMetadata.archiveId;
+    std::cout
+        << (successfulPublicationLoads ? "PASS: " : "FAIL: ")
+        << "atomic metadata publication writes and reloads a complete record\\n";
+    passed = successfulPublicationLoads && passed;
+#endif
 
     if (passed) {
         std::error_code cleanupError;
