@@ -183,7 +183,7 @@ int main()
         !hasMetadataTemporaryAlias(root);
     std::cout
         << (fileSyncFailureRejected ? "PASS: " : "FAIL: ")
-        << "metadata file-sync failure removes partial temporary record\\n";
+        << "metadata file-sync failure removes partial temporary record\n";
     passed = fileSyncFailureRejected && passed;
 
     const fs::path directorySyncFailurePath = root / "directory-sync-failure.meta";
@@ -200,7 +200,7 @@ int main()
         !hasMetadataTemporaryAlias(root);
     std::cout
         << (directorySyncRollback ? "PASS: " : "FAIL: ")
-        << "metadata directory-sync failure rolls back and cleans the record\\n";
+        << "metadata directory-sync failure rolls back and cleans the record\n";
     passed = directorySyncRollback && passed;
 
     const fs::path rollbackFailurePath = root / "rollback-failure.meta";
@@ -226,7 +226,7 @@ int main()
 
     std::cout
         << (retainedRecordLoads ? "PASS: " : "FAIL: ")
-        << "rollback-unlink failure reports and retains the complete metadata record\\n";
+        << "rollback-unlink failure reports and retains the complete metadata record\n";
     passed = retainedRecordLoads && passed;
 
     std::error_code publicationCleanupError;
@@ -234,18 +234,18 @@ int main()
     if (publicationCleanupError) {
         std::cerr
             << "FAIL: could not clean retained rollback fixture: "
-            << publicationCleanupError.message() << '\\n';
+            << publicationCleanupError.message() << '\n';
         passed = false;
     }
 
     const fs::path collisionPath = root / "existing.meta";
-    const std::string collisionSentinel = "existing metadata must remain unchanged\\n";
+    const std::string collisionSentinel = "existing metadata must remain unchanged\n";
     {
         std::ofstream sentinel(collisionPath, std::ios::binary);
         sentinel << collisionSentinel;
         sentinel.close();
         if (sentinel.fail()) {
-            std::cerr << "FAIL: could not write metadata collision sentinel\\n";
+            std::cerr << "FAIL: could not write metadata collision sentinel\n";
             passed = false;
         }
     }
@@ -265,7 +265,7 @@ int main()
         !hasMetadataTemporaryAlias(root);
     std::cout
         << (collisionNotOverwritten ? "PASS: " : "FAIL: ")
-        << "metadata publication does not overwrite an existing record and removes its temp alias\\n";
+        << "metadata publication does not overwrite an existing record and removes its temp alias\n";
     passed = collisionNotOverwritten && passed;
 
     const fs::path successfulPublicationPath = root / "successful-publication.meta";
@@ -285,7 +285,7 @@ int main()
         successfulMetadata.archiveId == publicationMetadata.archiveId;
     std::cout
         << (successfulPublicationLoads ? "PASS: " : "FAIL: ")
-        << "atomic metadata publication writes and reloads a complete record\\n";
+        << "atomic metadata publication writes and reloads a complete record\n";
     passed = successfulPublicationLoads && passed;
 #endif
 
