@@ -18,6 +18,11 @@ struct ArchiveMetadata {
     double compressionPercentage;
 
     long long archivedAt;
+
+    // Original POSIX rwx bits. Legacy metadata omits this field and restores
+    // with the restrictive 0600 fallback.
+    std::uint32_t originalPermissions = 0600;
+    bool hasOriginalPermissions = false;
 };
 
 bool createArchive(
