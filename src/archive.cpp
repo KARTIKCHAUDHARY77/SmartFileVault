@@ -17,6 +17,22 @@
 
 namespace fs = std::filesystem;
 
+#ifdef SFV_ENABLE_TEST_HOOKS
+static bool g_testFailMetadataFileSync = false;
+static bool g_testFailMetadataDirectorySync = false;
+static bool g_testFailMetadataRollbackUnlink = false;
+
+void setArchiveMetadataPublicationFailureInjection(
+    bool failFileSync,
+    bool failDirectorySync,
+    bool failRollbackUnlink)
+{
+    g_testFailMetadataFileSync = failFileSync;
+    g_testFailMetadataDirectorySync = failDirectorySync;
+    g_testFailMetadataRollbackUnlink = failRollbackUnlink;
+}
+#endif
+
 static bool syncFileDescriptor(int descriptor)
 {
 #if defined(__APPLE__) && defined(F_FULLFSYNC)
@@ -200,8 +216,22 @@ bool saveArchiveMetadata(
         success = false;
     }
 
-    if (success && !syncFileDescriptor(::fileno(output))) {
-        success = false;
+    if (success) {
+        bool fileSynchronized = false;
+#ifdef SFV_ENABLE_TEST_HOOKS
+        if (g_testFailMetadataFileSync) {
+            g_testFailMetadataFileSync = false;
+            errno = EIO;
+        } else
+#endif
+        {
+            fileSynchronized =
+                syncFileDescriptor(::fileno(output));
+        }
+
+        if (!fileSynchronized) {
+            success = false;
+        }
     }
 
     if (std::fclose(output) != 0) {
@@ -231,9 +261,31 @@ bool saveArchiveMetadata(
         return false;
     }
 
-    if (!syncDirectoryPath(parent)) {
-        const int syncError = errno;
-        if (::unlink(metadataPath.c_str()) == 0) {
+    bool metadataDirectorySynced = false;
+#ifdef SFV_ENABLE_TEST_HOOKS
+    if (g_testFailMetadataDirectorySync) {
+        g_testFailMetadataDirectorySync = false;
+        errno = EIO;
+    } else
+#endif
+    {
+        metadataDirectorySynced = syncDirectoryPath(parent);
+    }
+
+    if (!metadataDirectorySynced) {
+        const int syncError = errno == 0 ? EIO : errno;
+        int metadataRollbackResult = -1;
+#ifdef SFV_ENABLE_TEST_HOOKS
+        if (g_testFailMetadataRollbackUnlink) {
+            g_testFailMetadataRollbackUnlink = false;
+            errno = EACCES;
+        } else
+#endif
+        {
+            metadataRollbackResult = ::unlink(metadataPath.c_str());
+        }
+
+        if (metadataRollbackResult == 0 || errno == ENOENT) {
             if (!syncDirectoryPath(parent)) {
                 if (publishedPathMayRemain != nullptr) {
                     *publishedPathMayRemain = true;
