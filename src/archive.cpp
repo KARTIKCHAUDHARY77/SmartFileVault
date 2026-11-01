@@ -485,6 +485,16 @@ bool createArchive(
             inputPath,
             compressedPath
         )) {
+        // A publication-directory sync can fail after the destination link
+        // was created. Remove that exact generated path before returning so
+        // a failed createArchive call cannot leave an untracked archive.
+        error.clear();
+        fs::remove(compressedPath, error);
+        if (error) {
+            std::cerr
+                << "Archive cleanup warning: could not remove failed output: "
+                << error.message() << '\n';
+        }
 
         return false;
     }
