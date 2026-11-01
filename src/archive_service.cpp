@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <sys/stat.h>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -223,6 +224,24 @@ bool archiveAndRemoveOriginal(
             verifyFolderCreated
         );
 
+        cleanupArchiveArtifacts(archiveRoot, metadata);
+        return false;
+    }
+
+    // Confirm the source permission bits did not change while archiving;
+    // otherwise the metadata would no longer describe the source we remove.
+    struct stat currentSourceStatus {};
+    if (!metadata.hasOriginalPermissions ||
+        ::stat(filePath.c_str(), &currentSourceStatus) != 0 ||
+        static_cast<std::uint32_t>(currentSourceStatus.st_mode & 0777) !=
+            metadata.originalPermissions) {
+        std::cerr
+            << "Original file permissions changed during archiving; "
+            << "preserving original.\n";
+        cleanupCreatedVerifyFolder(
+            verifyFolder,
+            verifyFolderCreated
+        );
         cleanupArchiveArtifacts(archiveRoot, metadata);
         return false;
     }
