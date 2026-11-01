@@ -203,12 +203,12 @@ public:
             if (!syncDirectoryPath(parent)) {
                 std::cerr
                     << "Warning: completed output is durable, but temporary "
-                    << "name cleanup may reappear after a crash.\\n";
+                    << "name cleanup may reappear after a crash.\n";
             }
         } else {
             std::cerr
                 << "Warning: completed output is durable, but temporary "
-                << "name cleanup failed and will be retried.\\n";
+                << "name cleanup failed and will be retried.\n";
         }
 
         return true;
@@ -218,7 +218,7 @@ private:
     int descriptor_ = -1;
     int syncDescriptor_ = -1;
     bool contentsSynchronized_ = false;
-    std::string temporaryPath_
+    std::string temporaryPath_;
     std::string destinationPath_;
 };
 
@@ -363,7 +363,7 @@ bool compressFile(
     // Publish only a fully closed and synchronized archive. The destination
     // is never opened with truncation or allowed to overwrite an existing file.
     if (success && !temporaryOutput.syncContents()) {
-        std::cerr << "Compression error: could not sync completed archive.\\n";
+        std::cerr << "Compression error: could not sync completed archive.\n";
         success = false;
     }
 
@@ -457,7 +457,7 @@ bool decompressFile(
     }
 
     if (success && !temporaryOutput.syncContents()) {
-        std::cerr << "Decompression error: could not sync completed output.\\n";
+        std::cerr << "Decompression error: could not sync completed output.\n";
         success = false;
     }
 
