@@ -304,16 +304,20 @@ static bool runRoundTripCase(
         std::cerr
             << "FAIL: Expected a positive storage saving.\n";
         passed = false;
-    } else if (!expectedStorageBenefit && percentage > 0.0) {
+    } else if (!expectedStorageBenefit && percentage != 0.0) {
         std::cerr
-            << "FAIL: Unexpected positive storage saving.\n";
+            << "FAIL: Expected exactly 0% when compression provides no storage benefit.\n";
         passed = false;
     } else {
         std::cout
             << "PASS: Compression percentage sign\n";
     }
 
-    if (!decompressFile(compressed.string(), restored.string())) {
+    if (!decompressFile(
+            compressed.string(),
+            restored.string(),
+            originalSize
+        )) {
         std::cerr
             << "FAIL: Decompression failed for "
             << filename << '\n';

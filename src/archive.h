@@ -33,7 +33,8 @@ bool createArchive(
 
 bool saveArchiveMetadata(
     const std::string& metadataPath,
-    const ArchiveMetadata& metadata
+    const ArchiveMetadata& metadata,
+    bool* publishedPathMayRemain = nullptr
 );
 
 bool loadArchiveMetadata(

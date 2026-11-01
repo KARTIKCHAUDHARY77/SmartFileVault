@@ -140,6 +140,60 @@ TEST_DIR="$(mktemp -d /tmp/sfv-safety.XXXXXX)"
 (cd "$TEST_DIR" && /tmp/sfv_restore_safety_test)
 ```
 
+
+### Run bounded decompression and metadata regressions
+
+Run from the repository root:
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/decompression_limit_test.cpp src/compression.cpp \
+  -lz -o /tmp/sfv_decompression_limit_test
+/tmp/sfv_decompression_limit_test
+
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/archive_metadata_validation_test.cpp src/archive.cpp src/compression.cpp \
+  -lz -o /tmp/sfv_archive_metadata_validation_test
+/tmp/sfv_archive_metadata_validation_test
+
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/archive_legacy_metadata_compatibility_test.cpp \
+  src/archive.cpp src/compression.cpp src/compression_policy.cpp \
+  src/file_utils.cpp src/restore.cpp src/restore_safety.cpp \
+  -lz -o /tmp/sfv_archive_legacy_metadata_test
+/tmp/sfv_archive_legacy_metadata_test
+```
+
+### Run output publication rollback injection
+
+This focused test build enables test-only fault injection. Do not define
+`SFV_ENABLE_TEST_HOOKS` in the production application build.
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic -DSFV_ENABLE_TEST_HOOKS \
+  src/compression_output_safety_test.cpp src/compression.cpp \
+  -lz -o /tmp/sfv_compression_output_safety_test
+/tmp/sfv_compression_output_safety_test
+```
+
+### Filesystem compatibility note
+
+Output publication and metadata publication use same-directory POSIX hard links
+to make a completed file visible without overwriting an existing destination.
+They require hard-link support on the destination filesystem. On filesystems or
+network shares that do not support hard links (including some FAT/exFAT and
+network configurations), publication fails closed and the source is preserved.
+Compression temporary files use `.sfv-output-*`; metadata temporary aliases
+use `*.sfv-meta-*`. Archive catalog discovery accepts only completed
+`.meta` records, so these temporary names are ignored.
+
+The legacy compatibility test writes a small GZIP fixture with the original
+zlib `gzopen`/`gzwrite` writer format and restores it using the original
+eight-line metadata layout. No literal historical `.gz` binary fixture was
+present in the repository history at the integration point; this test verifies
+the legacy wire format and metadata compatibility rather than claiming to
+restore a recovered production archive.
+
 ### Run the end-to-end regression test
 
 ```bash

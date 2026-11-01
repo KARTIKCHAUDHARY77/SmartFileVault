@@ -9,6 +9,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -213,16 +214,20 @@ int main()
         ) && passed;
     }
 
-    std::error_code cleanupError;
-    fs::remove_all(root, cleanupError);
-    if (cleanupError) {
-        std::cerr << "FAIL: test directory cleanup: "
-                  << cleanupError.message() << '\n';
-        passed = false;
+    if (passed) {
+        std::error_code cleanupError;
+        fs::remove_all(root, cleanupError);
+        if (cleanupError) {
+            std::cerr << "FAIL: test directory cleanup: "
+                      << cleanupError.message() << '\n';
+            passed = false;
+        }
     }
 
     if (!passed) {
-        std::cerr << "ARCHIVE PERMISSION TESTS FAILED\n";
+        std::cerr
+            << "ARCHIVE PERMISSION TESTS FAILED; preserving test directory: "
+            << root.string() << '\n';
         return 1;
     }
 

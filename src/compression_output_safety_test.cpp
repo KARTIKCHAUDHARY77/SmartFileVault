@@ -206,7 +206,7 @@ int main()
 
     // Same-path decompression must preserve the compressed source.
     const bool samePathDecompression =
-        !decompressFile(archive.string(), archive.string()) &&
+        !decompressFile(archive.string(), archive.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(archive, actualBytes) &&
         actualBytes == archiveBytes;
 
@@ -224,7 +224,7 @@ int main()
     }
 
     const bool existingRestoreDestination =
-        !decompressFile(archive.string(), existingRestored.string()) &&
+        !decompressFile(archive.string(), existingRestored.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(existingRestored, actualBytes) &&
         actualBytes == restoredSentinel;
 
@@ -234,7 +234,7 @@ int main()
     ) && passed;
 
     const bool normalRoundTrip =
-        decompressFile(archive.string(), restored.string()) &&
+        decompressFile(archive.string(), restored.string(), static_cast<std::uintmax_t>(payload.size())) &&
         readFile(restored, actualBytes) &&
         actualBytes == originalBytes;
 
@@ -247,6 +247,68 @@ int main()
         !hasTemporaryOutput(temporary.path),
         "No temporary output files remain after success or rejection"
     ) && passed;
+
+#ifdef SFV_ENABLE_TEST_HOOKS
+    const fs::path rollbackSource =
+        temporary.path / "rollback-source.bin";
+    const fs::path rollbackDestination =
+        temporary.path / "rollback-destination.gz";
+    const fs::path rollbackRestored =
+        temporary.path / "rollback-restored.bin";
+
+    const bool rollbackFixtureWritten =
+        writeFile(rollbackSource, payload);
+    if (rollbackFixtureWritten) {
+        setCompressionPublishFailureInjection(
+            rollbackDestination.string(),
+            true,
+            true
+        );
+    }
+
+    const bool rollbackCompressionResult =
+        rollbackFixtureWritten &&
+        compressFile(rollbackSource.string(), rollbackDestination.string());
+
+    const bool rollbackStateExplicit =
+        rollbackFixtureWritten &&
+        !rollbackCompressionResult &&
+        fs::exists(rollbackSource) &&
+        fs::exists(rollbackDestination) &&
+        !hasTemporaryOutput(temporary.path);
+
+    const bool rollbackDestinationIsComplete =
+        rollbackStateExplicit &&
+        decompressFile(
+            rollbackDestination.string(),
+            rollbackRestored.string(),
+            static_cast<std::uintmax_t>(payload.size())
+        ) &&
+        readFile(rollbackRestored, actualBytes) &&
+        actualBytes == payload;
+
+    passed = check(
+        rollbackStateExplicit && rollbackDestinationIsComplete,
+        "Directory-sync and rollback-unlink failure leave an explicit complete destination while preserving source"
+    ) && passed;
+
+    std::error_code rollbackCleanupError;
+    fs::remove(rollbackDestination, rollbackCleanupError);
+    if (rollbackCleanupError) {
+        std::cerr
+            << "FAIL: could not clean injected rollback destination: "
+            << rollbackCleanupError.message() << '\n';
+        passed = false;
+    }
+    rollbackCleanupError.clear();
+    fs::remove(rollbackRestored, rollbackCleanupError);
+    if (rollbackCleanupError) {
+        std::cerr
+            << "FAIL: could not clean injected rollback restore: "
+            << rollbackCleanupError.message() << '\n';
+        passed = false;
+    }
+#endif
 
     if (!passed) {
         std::cerr << "COMPRESSION OUTPUT SAFETY TESTS FAILED\n";

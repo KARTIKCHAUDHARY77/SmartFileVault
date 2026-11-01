@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -51,8 +52,9 @@ static fs::path getSafeFilePath(
 {
     fs::path originalPath = directory / originalName;
 
-    if (!fs::exists(originalPath)) {
-        return originalPath;
+    std::error_code error;
+    if (!fs::exists(originalPath, error)) {
+        return error ? fs::path{} : originalPath;
     }
 
     fs::path namePath(originalName);
@@ -73,10 +75,14 @@ static fs::path getSafeFilePath(
         fs::path newPath =
             directory / newName;
 
-        if (!fs::exists(newPath)) {
-            return newPath;
+        error.clear();
+        if (!fs::exists(newPath, error)) {
+            return error ? fs::path{} : newPath;
         }
 
+        if (counter == std::numeric_limits<int>::max()) {
+            return {};
+        }
         counter++;
     }
 }
@@ -87,13 +93,25 @@ static bool filesMatch(
 {
     try {
 
-        if (!fs::exists(firstPath) ||
-            !fs::exists(secondPath)) {
+        std::error_code error;
+        if (!fs::exists(firstPath, error) || error) {
             return false;
         }
 
-        if (fs::file_size(firstPath) !=
-            fs::file_size(secondPath)) {
+        error.clear();
+        if (!fs::exists(secondPath, error) || error) {
+            return false;
+        }
+
+        error.clear();
+        const auto firstSize = fs::file_size(firstPath, error);
+        if (error) {
+            return false;
+        }
+
+        error.clear();
+        const auto secondSize = fs::file_size(secondPath, error);
+        if (error || firstSize != secondSize) {
             return false;
         }
 
@@ -196,7 +214,9 @@ bool restoreArchive(
         return false;
     }
 
-    if (!fs::exists(metadata.archivePath)) {
+    std::error_code filesystemError;
+    if (!fs::is_regular_file(metadata.archivePath, filesystemError) ||
+        filesystemError) {
 
         std::cerr
             << "Restore error: archive does not exist.\n";
@@ -227,26 +247,29 @@ bool restoreArchive(
         return false;
     }
 
-    try {
-
-        if (!fs::exists(destination)) {
-
-            fs::create_directories(destination);
+    filesystemError.clear();
+    if (!fs::exists(destination, filesystemError)) {
+        if (filesystemError) {
+            std::cerr
+                << "Restore error: could not inspect destination: "
+                << filesystemError.message() << '\n';
+            return false;
         }
 
-        if (!fs::is_directory(destination)) {
-
+        fs::create_directories(destination, filesystemError);
+        if (filesystemError) {
             std::cerr
-                << "Restore error: destination is not a directory.\n";
-
+                << "Restore error: could not create destination: "
+                << filesystemError.message() << '\n';
             return false;
         }
     }
-    catch (...) {
 
+    filesystemError.clear();
+    if (!fs::is_directory(destination, filesystemError) ||
+        filesystemError) {
         std::cerr
-            << "Restore error: could not access destination.\n";
-
+            << "Restore error: destination is not an accessible directory.\n";
         return false;
     }
 
@@ -286,6 +309,11 @@ bool restoreArchive(
             destination,
             metadata.originalName
         );
+    if (outputPath.empty()) {
+        std::cerr
+            << "Restore error: could not select a safe output path.\n";
+        return false;
+    }
 
     std::cout
         << "Restore destination: "
@@ -300,6 +328,7 @@ bool restoreArchive(
     if (!decompressFile(
             metadata.archivePath,
             outputPath.string(),
+            metadata.originalSize,
             outputPermissions)) {
 
         std::cerr
@@ -308,7 +337,9 @@ bool restoreArchive(
         return false;
     }
 
-    if (!fs::exists(outputPath)) {
+    filesystemError.clear();
+    if (!fs::is_regular_file(outputPath, filesystemError) ||
+        filesystemError) {
 
         std::cerr
             << "Restore error: output file was not created.\n";
@@ -318,8 +349,32 @@ bool restoreArchive(
 
     // If the original still exists, compare the restored
     // file with it byte-by-byte.
-    if (fs::exists(metadata.originalPath) &&
-        fs::is_regular_file(metadata.originalPath)) {
+    filesystemError.clear();
+    const bool originalExists =
+        fs::exists(metadata.originalPath, filesystemError);
+    if (filesystemError) {
+        std::cerr
+            << "Restore error: could not inspect original path: "
+            << filesystemError.message() << '\n';
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+        return false;
+    }
+
+    filesystemError.clear();
+    const bool originalIsRegular =
+        originalExists &&
+        fs::is_regular_file(metadata.originalPath, filesystemError);
+    if (filesystemError) {
+        std::cerr
+            << "Restore error: could not inspect original file type: "
+            << filesystemError.message() << '\n';
+        std::error_code cleanupError;
+        fs::remove(outputPath, cleanupError);
+        return false;
+    }
+
+    if (originalExists && originalIsRegular) {
 
         if (!filesMatch(
                 metadata.originalPath,
@@ -328,7 +383,13 @@ bool restoreArchive(
             std::cerr
                 << "Restore error: restored file does not match original.\n";
 
-            fs::remove(outputPath);
+            std::error_code cleanupError;
+            fs::remove(outputPath, cleanupError);
+            if (cleanupError) {
+                std::cerr
+                    << "Restore cleanup warning: "
+                    << cleanupError.message() << '\n';
+            }
 
             return false;
         }
@@ -337,13 +398,21 @@ bool restoreArchive(
 
         // Original file is no longer present.
         // At minimum, verify the original recorded size.
-        if (fs::file_size(outputPath) !=
-            metadata.originalSize) {
+        filesystemError.clear();
+        const std::uintmax_t restoredSize =
+            fs::file_size(outputPath, filesystemError);
+        if (filesystemError || restoredSize != metadata.originalSize) {
 
             std::cerr
                 << "Restore error: restored file size is incorrect.\n";
 
-            fs::remove(outputPath);
+            std::error_code cleanupError;
+            fs::remove(outputPath, cleanupError);
+            if (cleanupError) {
+                std::cerr
+                    << "Restore cleanup warning: "
+                    << cleanupError.message() << '\n';
+            }
 
             return false;
         }

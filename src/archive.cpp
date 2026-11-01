@@ -2,6 +2,9 @@
 #include "compression.h"
 
 #include <filesystem>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <cerrno>
 #include <fcntl.h>
 #include <fstream>
@@ -10,6 +13,7 @@
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -26,28 +30,6 @@ static bool syncFileDescriptor(int descriptor)
 #endif
 
     return ::fsync(descriptor) == 0;
-}
-
-static bool syncFilePath(const fs::path& path)
-{
-    const int descriptor = ::open(path.c_str(), O_WRONLY);
-    if (descriptor < 0) {
-        return false;
-    }
-
-    bool success = syncFileDescriptor(descriptor);
-    int savedError = errno;
-
-    if (::close(descriptor) != 0 && success) {
-        success = false;
-        savedError = errno;
-    }
-
-    if (!success) {
-        errno = savedError;
-    }
-
-    return success;
 }
 
 static bool syncDirectoryPath(const fs::path& path)
@@ -70,6 +52,39 @@ static bool syncDirectoryPath(const fs::path& path)
     }
 
     return success;
+}
+
+static bool parseUnsignedSize(
+    const std::string& rawText,
+    std::uintmax_t& parsedValue
+)
+{
+    if (rawText.empty()) {
+        return false;
+    }
+
+    const std::uintmax_t maximum =
+        std::numeric_limits<std::uintmax_t>::max();
+    std::uintmax_t value = 0;
+
+    // Validate the original bytes. Do not trim, accept signs, or let a
+    // conversion routine silently skip whitespace before parsing.
+    for (unsigned char character : rawText) {
+        if (character < '0' || character > '9') {
+            return false;
+        }
+
+        const std::uintmax_t digit =
+            static_cast<std::uintmax_t>(character - '0');
+        if (value > (maximum - digit) / 10U) {
+            return false;
+        }
+
+        value = value * 10U + digit;
+    }
+
+    parsedValue = value;
+    return true;
 }
 
 static bool isUnsignedDecimal(const std::string& value)
@@ -123,58 +138,148 @@ static std::string fileNameFromPath(
 
 bool saveArchiveMetadata(
     const std::string& metadataPath,
-    const ArchiveMetadata& metadata
+    const ArchiveMetadata& metadata,
+    bool* publishedPathMayRemain
 )
 {
-    std::ofstream file(
-        metadataPath
-    );
-
-    if (!file) {
-        return false;
+    if (publishedPathMayRemain != nullptr) {
+        *publishedPathMayRemain = false;
     }
 
-    file << metadata.archiveId << '\n';
-    file << metadata.originalName << '\n';
-    file << metadata.originalPath << '\n';
-    file << metadata.archivePath << '\n';
-    file << metadata.originalSize << '\n';
-    file << metadata.compressedSize << '\n';
-    file << metadata.compressionPercentage << '\n';
-    file << metadata.archivedAt << '\n';
+    // Serialize the complete record before creating a temporary file. The
+    // final .meta path appears only through an atomic no-overwrite link.
+    std::ostringstream serialized;
+    serialized << metadata.archiveId << '\n';
+    serialized << metadata.originalName << '\n';
+    serialized << metadata.originalPath << '\n';
+    serialized << metadata.archivePath << '\n';
+    serialized << metadata.originalSize << '\n';
+    serialized << metadata.compressedSize << '\n';
+    serialized << metadata.compressionPercentage << '\n';
+    serialized << metadata.archivedAt << '\n';
     if (metadata.hasOriginalPermissions) {
-        file << metadata.originalPermissions << '\n';
+        serialized << metadata.originalPermissions << '\n';
     }
 
-    file.flush();
-    if (!file.good()) {
-        return false;
-    }
-
-    file.close();
-    if (file.fail()) {
-        return false;
-    }
-
-    // The metadata must reach stable storage before archiveAndRemoveOriginal
-    // is allowed to remove the only source copy.
-    if (!syncFilePath(fs::path(metadataPath))) {
-        std::cerr << "Metadata error: could not sync metadata file.\n";
-        return false;
-    }
-
-    fs::path parent = fs::path(metadataPath).parent_path();
+    const std::string contents = serialized.str();
+    fs::path finalPath(metadataPath);
+    fs::path parent = finalPath.parent_path();
     if (parent.empty()) {
         parent = ".";
     }
 
-    if (!syncDirectoryPath(parent)) {
-        std::cerr << "Metadata error: could not sync metadata directory.\n";
+    const std::string pattern =
+        (parent / (finalPath.filename().string() + ".sfv-meta-XXXXXX")).string();
+    std::vector<char> writablePattern(pattern.begin(), pattern.end());
+    writablePattern.push_back('\0');
+
+    const int descriptor = ::mkstemp(writablePattern.data());
+    if (descriptor < 0) {
+        std::cerr << "Metadata error: could not create temporary metadata.\n";
         return false;
+    }
+
+    const std::string temporaryPath(writablePattern.data());
+    FILE* output = ::fdopen(descriptor, "wb");
+    if (output == nullptr) {
+        const int savedError = errno;
+        (void)::close(descriptor);
+        (void)::unlink(temporaryPath.c_str());
+        errno = savedError;
+        std::cerr << "Metadata error: could not open temporary metadata stream.\n";
+        return false;
+    }
+
+    bool success = true;
+    if (!contents.empty() &&
+        std::fwrite(contents.data(), 1, contents.size(), output) != contents.size()) {
+        success = false;
+    }
+
+    if (success && std::fflush(output) != 0) {
+        success = false;
+    }
+
+    if (success && !syncFileDescriptor(::fileno(output))) {
+        success = false;
+    }
+
+    if (std::fclose(output) != 0) {
+        success = false;
+    }
+
+    if (!success) {
+        const int savedError = errno;
+        if (::unlink(temporaryPath.c_str()) != 0 && errno != ENOENT) {
+            std::cerr
+                << "Metadata cleanup warning: partial temporary metadata remains at '"
+                << temporaryPath << "'.\n";
+        }
+        errno = savedError;
+        std::cerr << "Metadata error: could not write and sync metadata.\n";
+        return false;
+    }
+
+    if (::link(temporaryPath.c_str(), metadataPath.c_str()) != 0) {
+        const int savedError = errno;
+        if (::unlink(temporaryPath.c_str()) != 0 && errno != ENOENT) {
+            std::cerr
+                << "Metadata cleanup warning: temporary metadata remains at '"
+                << temporaryPath << "'.\n";
+        }
+        errno = savedError;
+        return false;
+    }
+
+    if (!syncDirectoryPath(parent)) {
+        const int syncError = errno;
+        if (::unlink(metadataPath.c_str()) == 0) {
+            if (!syncDirectoryPath(parent)) {
+                if (publishedPathMayRemain != nullptr) {
+                    *publishedPathMayRemain = true;
+                }
+                std::cerr
+                    << "Metadata rollback removed the published record, but "
+                    << "the directory rollback could not be synchronized; "
+                    << "the name may reappear after a crash.\n";
+            }
+        } else {
+            const int rollbackError = errno;
+            if (publishedPathMayRemain != nullptr) {
+                *publishedPathMayRemain = true;
+            }
+            std::cerr
+                << "ERROR: complete metadata was published at '"
+                << metadataPath
+                << "', but directory synchronization failed ("
+                << std::strerror(syncError)
+                << ") and rollback unlink failed ("
+                << std::strerror(rollbackError)
+                << "). The metadata record may remain visible.\n";
+        }
+
+        if (::unlink(temporaryPath.c_str()) != 0 && errno != ENOENT) {
+            std::cerr
+                << "Metadata cleanup warning: temporary alias remains at '"
+                << temporaryPath << "'.\n";
+        }
+        errno = syncError;
+        return false;
+    }
+
+    if (::unlink(temporaryPath.c_str()) != 0 && errno != ENOENT) {
+        std::cerr
+            << "Metadata warning: final record is durable, but temporary alias "
+            << "cleanup failed at '" << temporaryPath << "'.\n";
+    } else if (!syncDirectoryPath(parent)) {
+        std::cerr
+            << "Metadata warning: final record is durable, but temporary alias "
+            << "removal could reappear after a crash.\n";
     }
 
     return true;
 }
+
 
 bool loadArchiveMetadata(
     const std::string& metadataPath,
@@ -242,6 +347,21 @@ bool loadArchiveMetadata(
         return false;
     }
 
+    std::uintmax_t parsedOriginalSize = 0;
+    std::uintmax_t parsedCompressedSize = 0;
+    if (!parseUnsignedSize(originalSizeText, parsedOriginalSize)) {
+        std::cerr
+            << "Metadata error: original size must contain ASCII digits only "
+            << "and fit in uintmax_t.\n";
+        return false;
+    }
+    if (!parseUnsignedSize(compressedSizeText, parsedCompressedSize)) {
+        std::cerr
+            << "Metadata error: compressed size must contain ASCII digits only "
+            << "and fit in uintmax_t.\n";
+        return false;
+    }
+
     if (std::getline(file, originalPermissionsText)) {
         hasOriginalPermissionsLine = true;
     }
@@ -279,8 +399,6 @@ bool loadArchiveMetadata(
     cleanLine(metadata.originalPath);
     cleanLine(metadata.archivePath);
 
-    cleanLine(originalSizeText);
-    cleanLine(compressedSizeText);
     cleanLine(percentageText);
     cleanLine(archivedAtText);
     if (hasOriginalPermissionsLine) {
@@ -311,33 +429,8 @@ bool loadArchiveMetadata(
 
         std::size_t position = 0;
 
-        metadata.originalSize =
-            std::stoull(
-                originalSizeText,
-                &position
-            );
-
-        if (position != originalSizeText.size()) {
-            std::cerr
-                << "Metadata error: invalid original size.\n";
-            return false;
-        }
-
-        position = 0;
-
-        metadata.compressedSize =
-            std::stoull(
-                compressedSizeText,
-                &position
-            );
-
-        if (position != compressedSizeText.size()) {
-            std::cerr
-                << "Metadata error: invalid compressed size.\n";
-            return false;
-        }
-
-        position = 0;
+        metadata.originalSize = parsedOriginalSize;
+        metadata.compressedSize = parsedCompressedSize;
 
         metadata.compressionPercentage =
             std::stod(
@@ -407,9 +500,8 @@ bool createArchive(
     ArchiveMetadata& metadata
 )
 {
-    if (!fs::exists(inputPath) ||
-        !fs::is_regular_file(inputPath)) {
-
+    std::error_code inputError;
+    if (!fs::is_regular_file(inputPath, inputError) || inputError) {
         return false;
     }
 
@@ -485,17 +577,9 @@ bool createArchive(
             inputPath,
             compressedPath
         )) {
-        // A publication-directory sync can fail after the destination link
-        // was created. Remove that exact generated path before returning so
-        // a failed createArchive call cannot leave an untracked archive.
-        error.clear();
-        fs::remove(compressedPath, error);
-        if (error) {
-            std::cerr
-                << "Archive cleanup warning: could not remove failed output: "
-                << error.message() << '\n';
-        }
-
+        // Do not remove this path here: publication may have failed because
+        // a destination already existed. TemporaryOutputFile reports the
+        // rare case where a complete published output survives rollback.
         return false;
     }
 
@@ -513,15 +597,33 @@ bool createArchive(
     }
 
     std::uintmax_t originalSize =
-        fs::file_size(inputPath);
+        fs::file_size(inputPath, error);
+    if (error) {
+        std::cerr << "Archive error: could not read original size.\n";
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
 
     std::uintmax_t compressedSize =
-        fs::file_size(compressedPath);
+        fs::file_size(compressedPath, error);
+    if (error) {
+        std::cerr << "Archive error: could not read compressed size.\n";
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
 
-    double saved =
-        static_cast<double>(
-            originalSize - compressedSize
-        );
+    // A race or unexpected compressor result must never underflow the
+    // unsigned storage calculation or create metadata claiming savings.
+    if (compressedSize >= originalSize) {
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
+
+    const double saved =
+        static_cast<double>(originalSize - compressedSize);
 
     double percentage =
         0.0;
@@ -541,11 +643,26 @@ bool createArchive(
     metadata.originalName =
         originalName;
 
-    metadata.originalPath =
-        fs::absolute(inputPath).string();
+    const fs::path absoluteOriginal =
+        fs::absolute(inputPath, error);
+    if (error) {
+        std::cerr << "Archive error: could not resolve original path.\n";
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
 
-    metadata.archivePath =
-        fs::absolute(compressedPath).string();
+    const fs::path absoluteArchive =
+        fs::absolute(compressedPath, error);
+    if (error) {
+        std::cerr << "Archive error: could not resolve archive path.\n";
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
+
+    metadata.originalPath = absoluteOriginal.string();
+    metadata.archivePath = absoluteArchive.string();
 
     metadata.originalSize =
         originalSize;
@@ -572,16 +689,32 @@ bool createArchive(
         archiveId +
         ".meta";
 
+    bool metadataMayRemain = false;
     if (!saveArchiveMetadata(
             metadataPath,
-            metadata
+            metadata,
+            &metadataMayRemain
         )) {
+        if (metadataMayRemain) {
+            // The metadata and archive are complete, but the directory
+            // durability rollback failed. Retain both files and keep the
+            // original source; do not let archive-service cleanup mistake
+            // this state for artifacts that were never published.
+            std::cerr
+                << "Archive warning: metadata rollback failed; preserving "
+                << "the published archive, metadata, and original source.\n";
+        } else {
+            error.clear();
+            fs::remove(compressedPath, error);
+            if (error) {
+                std::cerr
+                    << "Archive cleanup warning: compressed rollback failed: "
+                    << error.message() << '\n';
+            }
+        }
 
-        fs::remove(
-            compressedPath,
-            error
-        );
-
+        // Do not pass a possibly colliding metadata path to generic cleanup.
+        metadata = ArchiveMetadata{};
         return false;
     }
 
@@ -601,13 +734,15 @@ std::vector<ArchiveMetadata> getAllArchives(
     std::string metadataFolder =
         archiveRoot + "/metadata";
 
-    if (!fs::exists(metadataFolder) ||
-        !fs::is_directory(metadataFolder)) {
-
+    std::error_code error;
+    if (!fs::exists(metadataFolder, error) || error) {
         return archives;
     }
 
-    std::error_code error;
+    error.clear();
+    if (!fs::is_directory(metadataFolder, error) || error) {
+        return archives;
+    }
 
     for (
         fs::directory_iterator it(
