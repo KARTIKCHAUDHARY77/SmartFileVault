@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <unistd.h>
+#include <sys/stat.h>
 #include <zlib.h>
 
 namespace fs = std::filesystem;
@@ -253,7 +254,8 @@ bool compressFile(
 bool decompressFile(
     const std::string& compressedPath,
     const std::string& outputPath,
-    std::uintmax_t expectedOutputBytes
+    std::uintmax_t expectedOutputBytes,
+    unsigned int outputPermissions
 ) {
     // Read the GZIP stream directly so we can enforce an exact output bound
     // and reject trailing bytes or concatenated GZIP members.
@@ -431,6 +433,18 @@ bool decompressFile(
     if (std::fflush(output) != 0) {
         success = false;
     }
+
+    // Apply intended restore permissions only after decompressed
+    // contents have been flushed and before the temporary file is closed.
+    if (success &&
+        ::fchmod(
+            ::fileno(output),
+            static_cast<mode_t>(outputPermissions & 0777U)
+        ) != 0) {
+        success = false;
+    }
+
+
 
     if (std::fclose(output) != 0) {
         success = false;
