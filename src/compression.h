@@ -12,7 +12,8 @@ bool compressFile(
 bool decompressFile(
     const std::string& compressedPath,
     const std::string& outputPath,
-    std::uintmax_t expectedOutputBytes
+    std::uintmax_t expectedOutputBytes,
+    unsigned int outputPermissions = 0600U
 );
 
 bool compressionProvidesBenefit(
