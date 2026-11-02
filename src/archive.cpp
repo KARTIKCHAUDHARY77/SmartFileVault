@@ -2,6 +2,8 @@
 #include "compression.h"
 
 #include <filesystem>
+#include <cctype>
+#include <cmath>
 #include <cerrno>
 #include <fcntl.h>
 #include <fstream>
@@ -84,6 +86,35 @@ static bool isUnsignedDecimal(const std::string& value)
         }
     }
 
+    return true;
+}
+
+// Parse an unsigned metadata integer without accepting signs, whitespace, or overflow.
+static bool parseUnsignedDecimal(
+    const std::string& text,
+    std::uintmax_t& parsedValue
+)
+{
+    if (!isUnsignedDecimal(text)) {
+        return false;
+    }
+
+    const std::uintmax_t maximum =
+        std::numeric_limits<std::uintmax_t>::max();
+
+    std::uintmax_t value = 0;
+    for (unsigned char character : text) {
+        const std::uintmax_t digit =
+            static_cast<std::uintmax_t>(character - '0');
+
+        if (value > (maximum - digit) / 10U) {
+            return false;
+        }
+
+        value = value * 10U + digit;
+    }
+
+    parsedValue = value;
     return true;
 }
 
@@ -279,12 +310,23 @@ bool loadArchiveMetadata(
     cleanLine(metadata.originalPath);
     cleanLine(metadata.archivePath);
 
-    cleanLine(originalSizeText);
-    cleanLine(compressedSizeText);
-    cleanLine(percentageText);
-    cleanLine(archivedAtText);
+    // getline() retains the carriage return from Windows CRLF files.
+    // Remove only that line-ending character from numeric fields.
+    // Spaces, tabs, signs, and other characters remain invalid.
+    auto stripCarriageReturn = [](std::string& value)
+    {
+        if (!value.empty() && value.back() == '\r') {
+            value.pop_back();
+        }
+    };
+
+    stripCarriageReturn(originalSizeText);
+    stripCarriageReturn(compressedSizeText);
+    stripCarriageReturn(percentageText);
+    stripCarriageReturn(archivedAtText);
+
     if (hasOriginalPermissionsLine) {
-        cleanLine(originalPermissionsText);
+        stripCarriageReturn(originalPermissionsText);
     }
 
     if (metadata.archiveId.empty()) {
@@ -309,82 +351,75 @@ bool loadArchiveMetadata(
 
     try {
 
+        std::uintmax_t parsedOriginalSize = 0;
+        std::uintmax_t parsedCompressedSize = 0;
+        std::uintmax_t parsedTimestamp = 0;
+        std::uintmax_t parsedPermissions = 0600;
+
+        if (!parseUnsignedDecimal(originalSizeText, parsedOriginalSize)) {
+            std::cerr
+                << "Metadata error: original size must contain ASCII digits only and fit in uintmax_t.\n";
+            return false;
+        }
+
+        if (!parseUnsignedDecimal(compressedSizeText, parsedCompressedSize)) {
+            std::cerr
+                << "Metadata error: compressed size must contain ASCII digits only and fit in uintmax_t.\n";
+            return false;
+        }
+
+        // Archive timestamps are non-negative Unix epoch values.
+        if (!parseUnsignedDecimal(archivedAtText, parsedTimestamp) ||
+            parsedTimestamp > static_cast<std::uintmax_t>(
+                std::numeric_limits<long long>::max())) {
+            std::cerr << "Metadata error: invalid archive timestamp.\n";
+            return false;
+        }
+
+        // std::stod accepts leading whitespace, so reject it explicitly.
+        if (percentageText.empty()) {
+            std::cerr << "Metadata error: compression percentage is empty.\n";
+            return false;
+        }
+
+        for (unsigned char character : percentageText) {
+            if (std::isspace(character)) {
+                std::cerr << "Metadata error: whitespace in compression percentage.\n";
+                return false;
+            }
+        }
+
         std::size_t position = 0;
-
-        metadata.originalSize =
-            std::stoull(
-                originalSizeText,
-                &position
-            );
-
-        if (position != originalSizeText.size()) {
+        const double parsedPercentage = std::stod(percentageText, &position);
+        if (position != percentageText.size() ||
+            !std::isfinite(parsedPercentage) ||
+            parsedPercentage < 0.0 ||
+            parsedPercentage > 100.0) {
             std::cerr
-                << "Metadata error: invalid original size.\n";
-            return false;
-        }
-
-        position = 0;
-
-        metadata.compressedSize =
-            std::stoull(
-                compressedSizeText,
-                &position
-            );
-
-        if (position != compressedSizeText.size()) {
-            std::cerr
-                << "Metadata error: invalid compressed size.\n";
-            return false;
-        }
-
-        position = 0;
-
-        metadata.compressionPercentage =
-            std::stod(
-                percentageText,
-                &position
-            );
-
-        if (position != percentageText.size()) {
-            std::cerr
-                << "Metadata error: invalid compression percentage.\n";
-            return false;
-        }
-
-        position = 0;
-
-        metadata.archivedAt =
-            std::stoll(
-                archivedAtText,
-                &position
-            );
-
-        if (position != archivedAtText.size()) {
-            std::cerr
-                << "Metadata error: invalid archive timestamp.\n";
+                << "Metadata error: compression percentage must be finite and between 0 and 100.\n";
             return false;
         }
 
         if (hasOriginalPermissionsLine) {
-            if (!isUnsignedDecimal(originalPermissionsText)) {
-                std::cerr
-                    << "Metadata error: invalid original permissions.\n";
-                return false;
-            }
-
-            position = 0;
-            const unsigned long permissions =
-                std::stoul(originalPermissionsText, &position);
-
-            if (position != originalPermissionsText.size() ||
-                permissions > 0777UL) {
+            if (!parseUnsignedDecimal(
+                    originalPermissionsText,
+                    parsedPermissions
+                ) || parsedPermissions > 0777U) {
                 std::cerr
                     << "Metadata error: original permissions are out of range.\n";
                 return false;
             }
+        }
 
+        // Assign numeric fields only after all numeric values have passed validation.
+        metadata.originalSize = parsedOriginalSize;
+        metadata.compressedSize = parsedCompressedSize;
+        metadata.compressionPercentage = parsedPercentage;
+        metadata.archivedAt = static_cast<long long>(parsedTimestamp);
+
+        if (hasOriginalPermissionsLine) {
             metadata.originalPermissions =
-                static_cast<std::uint32_t>(permissions);
+                static_cast<std::uint32_t>(parsedPermissions);
             metadata.hasOriginalPermissions = true;
         }
     }
