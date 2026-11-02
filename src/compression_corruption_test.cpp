@@ -12,13 +12,15 @@ namespace fs = std::filesystem;
 static bool checkRejected(
     const fs::path& compressedFile,
     const fs::path& restoredFile,
-    const std::string& testName
+    const std::string& testName,
+    std::uintmax_t expectedOutputBytes
 ) {
     std::error_code error;
 
     const bool decompressed = decompressFile(
         compressedFile.string(),
-        restoredFile.string()
+        restoredFile.string(),
+        expectedOutputBytes
     );
 
     const bool restoredExists = fs::exists(restoredFile, error);
@@ -85,7 +87,8 @@ int main() {
 
         const bool decompressed = decompressFile(
             validGzip.string(),
-            validRestored.string()
+            validRestored.string(),
+            static_cast<std::uintmax_t>(originalBytes.size())
         );
 
         if (decompressed &&
@@ -186,7 +189,7 @@ int main() {
             return 1;
         }
 
-        if (!checkRejected(inputFile, restoredFile, testCase.label)) {
+        if (!checkRejected(inputFile, restoredFile, testCase.label, static_cast<std::uintmax_t>(originalBytes.size()))) {
             ++failures;
         }
     }

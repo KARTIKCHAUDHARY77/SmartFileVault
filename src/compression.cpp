@@ -1,15 +1,27 @@
 
 #include "compression.h"
 
+#include <cerrno>
 #include <array>
 #include <cstdint>
+#include <cstddef>
+#include <cstdio>
 #include <filesystem>
+#include <fcntl.h>
 #include <fstream>
-#include <system_error>
+#include <iostream>
 #include <openssl/evp.h>
+#include <string>
+#include <stdlib.h>
+#include <system_error>
+#include <vector>
+
+#include <unistd.h>
+#include <sys/stat.h>
 #include <zlib.h>
 
 namespace fs = std::filesystem;
+
 
 #ifdef SFV_ENABLE_TEST_HOOK
 static void (*compressionTestHook)() = nullptr;
@@ -19,12 +31,214 @@ void setCompressionTestHook(void (*hook)()) {
 }
 #endif
 
+using Sha256Hash = std::array<unsigned char, 32>;
+
+static bool syncFileDescriptor(int descriptor)
+{
+#if defined(__APPLE__) && defined(F_FULLFSYNC)
+    if (::fcntl(descriptor, F_FULLFSYNC) == 0) {
+        return true;
+    }
+
+    // Some filesystems do not implement F_FULLFSYNC. Use fsync as the
+    // portable fallback only for an unsupported-operation response.
+    if (errno != EINVAL && errno != ENOTSUP && errno != ENOTTY) {
+        return false;
+    }
+#endif
+
+    return ::fsync(descriptor) == 0;
+}
+
+static bool syncDirectoryPath(const fs::path& directory)
+{
+    const int descriptor = ::open(directory.c_str(), O_RDONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = (::fsync(descriptor) == 0);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
+
+// Build output in a unique temporary file beside the destination. The final
+// hard-link publication is atomic and fails rather than replacing an existing
+// file. Keeping the temporary file in the same directory ensures that the
+// publication cannot cross filesystem boundaries.
+class TemporaryOutputFile {
+public:
+    TemporaryOutputFile() = default;
+
+    TemporaryOutputFile(const TemporaryOutputFile&) = delete;
+    TemporaryOutputFile& operator=(const TemporaryOutputFile&) = delete;
+
+    ~TemporaryOutputFile() {
+        if (descriptor_ >= 0) {
+            ::close(descriptor_);
+        }
+        if (syncDescriptor_ >= 0) {
+            ::close(syncDescriptor_);
+        }
+
+        if (!temporaryPath_.empty() &&
+            ::unlink(temporaryPath_.c_str()) != 0 &&
+            errno != ENOENT) {
+            std::cerr
+                << "Warning: could not remove temporary output '"
+                << temporaryPath_ << "'.\n";
+        }
+    }
+
+    bool create(const std::string& destinationPath) {
+        fs::path parent = fs::path(destinationPath).parent_path();
+
+        if (parent.empty()) {
+            parent = ".";
+        }
+
+        std::string pattern =
+            (parent / ".sfv-output-XXXXXX").string();
+
+        std::vector<char> writablePattern(
+            pattern.begin(),
+            pattern.end()
+        );
+        writablePattern.push_back('\0');
+
+        descriptor_ = ::mkstemp(writablePattern.data());
+
+        if (descriptor_ < 0) {
+            return false;
+        }
+
+        temporaryPath_ = writablePattern.data();
+        destinationPath_ = destinationPath;
+
+        // Keep a duplicate descriptor so the completed stream can be closed
+        // by zlib/stdio before its data is synchronized to stable storage.
+        syncDescriptor_ = ::dup(descriptor_);
+        if (syncDescriptor_ < 0) {
+            return false;
+        }
+
+        const int descriptorFlags = ::fcntl(syncDescriptor_, F_GETFD);
+        if (descriptorFlags < 0 ||
+            ::fcntl(
+                syncDescriptor_,
+                F_SETFD,
+                descriptorFlags | FD_CLOEXEC
+            ) != 0) {
+            return false;
+        }
+
+        return true;
+    }
+
+    int descriptor() const {
+        return descriptor_;
+    }
+
+    bool syncContents() {
+        if (syncDescriptor_ < 0) {
+            return false;
+        }
+
+        bool success = syncFileDescriptor(syncDescriptor_);
+        int savedError = errno;
+
+        if (::close(syncDescriptor_) != 0 && success) {
+            success = false;
+            savedError = errno;
+        }
+        syncDescriptor_ = -1;
+
+        if (!success) {
+            errno = savedError;
+            return false;
+        }
+
+        contentsSynchronized_ = true;
+        return true;
+    }
+
+    // Call only after gzdopen() or fdopen() successfully takes ownership.
+    void releaseDescriptor() {
+        descriptor_ = -1;
+    }
+
+    bool publish() {
+        if (temporaryPath_.empty() || destinationPath_.empty() ||
+            !contentsSynchronized_) {
+            errno = EINVAL;
+            return false;
+        }
+
+        // link() creates the destination name atomically and returns EEXIST
+        // if a file or symlink appeared there after the operation began.
+        if (::link(
+                temporaryPath_.c_str(),
+                destinationPath_.c_str()
+            ) != 0) {
+            return false;
+        }
+
+        fs::path parent = fs::path(destinationPath_).parent_path();
+        if (parent.empty()) {
+            parent = ".";
+        }
+
+        // Persist the destination directory entry before reporting success.
+        // If this fails, attempt to remove the published name; callers will
+        // preserve the original source because publication reports failure.
+        if (!syncDirectoryPath(parent)) {
+            const int syncError = errno;
+            if (::unlink(destinationPath_.c_str()) == 0) {
+                (void)syncDirectoryPath(parent);
+            }
+            errno = syncError;
+            return false;
+        }
+
+        // The destination is now durable. Persist temporary-name removal too;
+        // a failure here can leave only a harmless stale .sfv-output-* alias.
+        if (::unlink(temporaryPath_.c_str()) == 0 || errno == ENOENT) {
+            temporaryPath_.clear();
+            if (!syncDirectoryPath(parent)) {
+                std::cerr
+                    << "Warning: completed output is durable, but temporary "
+                    << "name cleanup may reappear after a crash.\n";
+            }
+        } else {
+            std::cerr
+                << "Warning: completed output is durable, but temporary "
+                << "name cleanup failed and will be retried.\n";
+        }
+
+        return true;
+    }
+
+private:
+    int descriptor_ = -1;
+    int syncDescriptor_ = -1;
+    bool contentsSynchronized_ = false;
+    std::string temporaryPath_;
+    std::string destinationPath_;
+};
 struct FileState {
     std::uintmax_t size;
     fs::file_time_type modifiedTime;
 };
-
-using Sha256Hash = std::array<unsigned char, 32>;
 
 static bool getFileState(
     const std::string& filePath,
@@ -57,8 +271,15 @@ static bool fileChanged(
         return true;
     }
 
-    return before.size != after.size ||
-           before.modifiedTime != after.modifiedTime;
+    if (before.size != after.size) {
+        return true;
+    }
+
+    if (before.modifiedTime != after.modifiedTime) {
+        return true;
+    }
+
+    return false;
 }
 
 static bool hashFile(
@@ -122,11 +343,10 @@ static bool hashFile(
                 hash.data(),
                 &hashLength
             ) == 1 &&
-            hashLength == hash.size();
+            hashLength == static_cast<unsigned int>(hash.size());
     }
 
     EVP_MD_CTX_free(context);
-
     return success;
 }
 
@@ -134,8 +354,7 @@ bool compressFile(
     const std::string& inputPath,
     const std::string& outputPath
 ) {
-    std::error_code error;
-
+    // Prevent attempts to compress a file onto itself.
     try {
         if (fs::absolute(inputPath).lexically_normal() ==
             fs::absolute(outputPath).lexically_normal()) {
@@ -151,7 +370,8 @@ bool compressFile(
         return false;
     }
 
-    Sha256Hash hashBefore;
+    // Hash the original source before compression begins.
+    Sha256Hash hashBefore{};
 
     if (!hashFile(inputPath, hashBefore)) {
         return false;
@@ -163,7 +383,10 @@ bool compressFile(
         return false;
     }
 
-    if (fs::exists(outputPath, error) || error) {
+    // Use a private temporary file beside the destination.
+    TemporaryOutputFile temporaryOutput;
+
+    if (!temporaryOutput.create(outputPath)) {
         return false;
     }
 
@@ -179,19 +402,27 @@ bool compressFile(
     gzFile output = nullptr;
 
     if (success) {
-        output = gzopen(outputPath.c_str(), "wb");
+        output = gzdopen(
+            temporaryOutput.descriptor(),
+            "wb"
+        );
 
         if (output == nullptr) {
             success = false;
+        } else {
+            temporaryOutput.releaseDescriptor();
         }
     }
 
-    char buffer[8192];
-    #ifdef SFV_ENABLE_TEST_HOOK
-    if (compressionTestHook != nullptr) {
+#ifdef SFV_ENABLE_TEST_HOOK
+    // The regression test changes the source after the initial hash
+    // but before the source is read for compression.
+    if (success && compressionTestHook != nullptr) {
         compressionTestHook();
     }
-    #endif
+#endif
+
+    char buffer[8192];
 
     while (success) {
         input.read(buffer, sizeof(buffer));
@@ -199,6 +430,7 @@ bool compressFile(
         const std::streamsize bytesRead = input.gcount();
 
         if (bytesRead > 0) {
+            // Hash exactly the bytes being compressed.
             if (EVP_DigestUpdate(
                     context,
                     buffer,
@@ -214,7 +446,7 @@ bool compressFile(
                 static_cast<unsigned int>(bytesRead)
             );
 
-            if (written != bytesRead) {
+            if (written != static_cast<int>(bytesRead)) {
                 success = false;
                 break;
             }
@@ -235,7 +467,7 @@ bool compressFile(
         }
     }
 
-    Sha256Hash hashDuring;
+    Sha256Hash hashDuring{};
     unsigned int hashLength = 0;
 
     if (success) {
@@ -245,189 +477,257 @@ bool compressFile(
                 hashDuring.data(),
                 &hashLength
             ) == 1 &&
-            hashLength == hashDuring.size();
+            hashLength == static_cast<unsigned int>(hashDuring.size());
     }
 
     EVP_MD_CTX_free(context);
 
-    if (output != nullptr) {
-        const int closeResult = gzclose(output);
-
-        if (closeResult != Z_OK) {
-            success = false;
-        }
+    // Finish and close GZIP before synchronizing the temporary file.
+    if (output != nullptr && gzclose(output) != Z_OK) {
+        success = false;
     }
 
-    Sha256Hash hashAfter;
+    // Hash the source again after compression.
+    Sha256Hash hashAfter{};
 
     if (!hashFile(inputPath, hashAfter)) {
         success = false;
     }
 
+    // Source content must be identical before, during and after compression.
     if (success &&
         (hashBefore != hashDuring ||
          hashDuring != hashAfter)) {
         success = false;
     }
 
+    // Keep the additional size and modification-time check.
     if (fileChanged(before, inputPath)) {
         success = false;
     }
 
     if (!success) {
-        fs::remove(outputPath, error);
         return false;
     }
 
-    return true;
+    if (!temporaryOutput.syncContents()) {
+        std::cerr << "Compression error: could not sync completed archive.\n";
+        return false;
+    }
+
+    // Atomically publish without overwriting an existing destination.
+    return temporaryOutput.publish();
 }
 
 bool decompressFile(
     const std::string& compressedPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    std::uintmax_t expectedOutputBytes,
+    unsigned int outputPermissions
 ) {
-    try {
-        if (fs::absolute(compressedPath).lexically_normal() ==
-            fs::absolute(outputPath).lexically_normal()) {
-            return false;
-        }
-    } catch (const fs::filesystem_error&) {
-        return false;
-    }
-
-    std::ifstream headerFile(
+    // Read the GZIP stream directly so we can enforce an exact output bound
+    // and reject trailing bytes or concatenated GZIP members.
+    std::ifstream input(
         compressedPath,
         std::ios::binary
     );
 
-    if (!headerFile) {
+    if (!input) {
         return false;
     }
 
-    unsigned char header[2] = {};
+    TemporaryOutputFile temporaryOutput;
 
-    headerFile.read(
-        reinterpret_cast<char*>(header),
-        sizeof(header)
+    if (!temporaryOutput.create(outputPath)) {
+        return false;
+    }
+
+    FILE* output = fdopen(
+        temporaryOutput.descriptor(),
+        "wb"
     );
 
-    if (headerFile.gcount() != 2 ||
-        header[0] != 0x1f ||
-        header[1] != 0x8b) {
+    if (output == nullptr) {
         return false;
     }
 
-    headerFile.close();
+    temporaryOutput.releaseDescriptor();
 
-    std::error_code error;
+    z_stream stream{};
 
-    if (fs::exists(outputPath, error) || error) {
+    if (inflateInit2(&stream, MAX_WBITS + 16) != Z_OK) {
+        std::fclose(output);
         return false;
     }
 
-    gzFile input = gzopen(compressedPath.c_str(), "rb");
+    char inputBuffer[8192];
+    char outputBuffer[8192];
 
-    if (input == nullptr) {
-        return false;
-    }
-
-    std::ofstream output(
-        outputPath,
-        std::ios::binary
-    );
-
-    if (!output) {
-        gzclose(input);
-        return false;
-    }
-
+    std::uintmax_t totalOutputBytes = 0;
     bool success = true;
-    std::uint64_t totalBytesRead = 0;
-    char buffer[8192];
+    bool streamEnded = false;
+    bool inputEnded = false;
 
-    while (true) {
-        const int bytesRead = gzread(
-            input,
-            buffer,
-            sizeof(buffer)
-        );
+    while (success && !streamEnded) {
+        if (stream.avail_in == 0 && !inputEnded) {
+            input.read(
+                inputBuffer,
+                sizeof(inputBuffer)
+            );
 
-        if (bytesRead < 0) {
-            success = false;
-            break;
-        }
+            const std::streamsize inputBytes = input.gcount();
 
-        if (bytesRead == 0) {
-            break;
-        }
-
-                output.write(buffer, bytesRead);
-
-        if (!output) {
-            success = false;
-            break;
-        }
-
-        totalBytesRead += static_cast<std::uint64_t>(bytesRead);
-    }
-
-    int errorCode = Z_OK;
-    gzerror(input, &errorCode);
-
-    if (errorCode != Z_OK) {
-        success = false;
-    }
-
-    const int closeResult = gzclose(input);
-
-    if (closeResult != Z_OK) {
-        success = false;
-    }
-
-        output.close();
-
-    if (!output) {
-        success = false;
-    }
-
-    // Reject trailing data and concatenated members: the final 4 bytes of a
-    // single-member GZIP file are the original size modulo 2^32.
-    if (success) {
-        std::ifstream footerFile(compressedPath, std::ios::binary);
-        unsigned char footer[4] = {};
-
-        if (!footerFile) {
-            success = false;
-        } else {
-            footerFile.seekg(-4, std::ios::end);
-            footerFile.read(reinterpret_cast<char*>(footer), 4);
-
-            if (!footerFile || footerFile.gcount() != 4) {
+            if (input.bad() || inputBytes < 0) {
                 success = false;
-            } else {
-                const std::uint32_t expected =
-                    static_cast<std::uint32_t>(footer[0]) |
-                    (static_cast<std::uint32_t>(footer[1]) << 8) |
-                    (static_cast<std::uint32_t>(footer[2]) << 16) |
-                    (static_cast<std::uint32_t>(footer[3]) << 24);
-
-                if (expected !=
-                    static_cast<std::uint32_t>(totalBytesRead &
-                                               0xFFFFFFFFu)) {
-                    success = false;
-                }
+                break;
             }
+
+            if (input.eof()) {
+                inputEnded = true;
+            }
+
+            if (inputBytes == 0) {
+                success = false;
+                break;
+            }
+
+            stream.next_in =
+                reinterpret_cast<Bytef*>(inputBuffer);
+
+            stream.avail_in =
+                static_cast<uInt>(inputBytes);
+        }
+
+        stream.next_out =
+            reinterpret_cast<Bytef*>(outputBuffer);
+
+        stream.avail_out =
+            static_cast<uInt>(sizeof(outputBuffer));
+
+        const uInt inputBeforeInflate = stream.avail_in;
+
+        const int inflateResult =
+            inflate(&stream, Z_NO_FLUSH);
+
+        const std::size_t producedBytes =
+            sizeof(outputBuffer) - stream.avail_out;
+
+        // This subtraction is safe because totalOutputBytes is only
+        // increased after checking it against the expected bound.
+        if (producedBytes >
+            expectedOutputBytes - totalOutputBytes) {
+            success = false;
+            break;
+        }
+
+        if (producedBytes > 0) {
+            const std::size_t bytesWritten =
+                std::fwrite(
+                    outputBuffer,
+                    1,
+                    producedBytes,
+                    output
+                );
+
+            if (bytesWritten != producedBytes) {
+                success = false;
+                break;
+            }
+
+            totalOutputBytes +=
+                static_cast<std::uintmax_t>(producedBytes);
+        }
+
+        if (inflateResult == Z_STREAM_END) {
+            streamEnded = true;
+
+            // SmartFileVault writes one GZIP member per archive. Reject
+            // any unread input in this buffer, any following bytes, and
+            // therefore concatenated members or trailing garbage.
+            if (stream.avail_in != 0) {
+                success = false;
+                break;
+            }
+
+            const int nextByte = input.peek();
+
+            if (nextByte != std::char_traits<char>::eof() ||
+                input.bad() ||
+                !input.eof()) {
+                success = false;
+            }
+
+            break;
+        }
+
+        if (inflateResult != Z_OK &&
+            inflateResult != Z_BUF_ERROR) {
+            // Includes invalid GZIP headers, invalid DEFLATE data,
+            // checksum failures, and malformed trailers.
+            success = false;
+            break;
+        }
+
+        if (inputEnded &&
+            stream.avail_in == 0 &&
+            producedBytes == 0) {
+            // No more compressed input is available and the GZIP end
+            // marker/trailer was not reached.
+            success = false;
+            break;
+        }
+
+        if (inputBeforeInflate == stream.avail_in &&
+            producedBytes == 0) {
+            if (stream.avail_in == 0 && !inputEnded) {
+                continue;
+            }
+
+            success = false;
+            break;
         }
     }
 
-    if (!success) {
-        fs::remove(outputPath, error);
-        return false;
+    if (inflateEnd(&stream) != Z_OK) {
+        success = false;
     }
 
-    return true;
-}
+    // The metadata size is an exact expectation, not just a hint.
+    // Reject short output as well as output that exceeds the bound.
+    if (!streamEnded || totalOutputBytes != expectedOutputBytes) {
+        success = false;
+    }
 
+    if (std::fflush(output) != 0) {
+        success = false;
+    }
+
+    // Apply intended restore permissions only after decompressed
+    // contents have been flushed and before the temporary file is closed.
+    if (success &&
+        ::fchmod(
+            ::fileno(output),
+            static_cast<mode_t>(outputPermissions & 0777U)
+        ) != 0) {
+        success = false;
+    }
+
+
+
+    if (std::fclose(output) != 0) {
+        success = false;
+    }
+
+    // Synchronize only after the output stream has closed successfully.
+    if (success && !temporaryOutput.syncContents()) {
+        std::cerr << "Decompression error: could not sync completed output.\n";
+        success = false;
+    }
+
+    // Publish only a complete, valid, size-matched single-member GZIP
+    // stream. On every failure the RAII owner removes the temporary file.
+    return success && temporaryOutput.publish();
+}
 bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath
@@ -438,18 +738,20 @@ bool compressionProvidesBenefit(
         return false;
     }
 
+    error.clear();
+
     if (!fs::is_regular_file(compressedPath, error) || error) {
         return false;
     }
 
-    const auto originalSize =
+    const std::uintmax_t originalSize =
         fs::file_size(originalPath, error);
 
     if (error) {
         return false;
     }
 
-    const auto compressedSize =
+    const std::uintmax_t compressedSize =
         fs::file_size(compressedPath, error);
 
     if (error) {
@@ -463,23 +765,37 @@ double getCompressionPercentage(
     const std::string& originalPath,
     const std::string& compressedPath
 ) {
-    if (!compressionProvidesBenefit(
-            originalPath,
-            compressedPath
-        )) {
+    std::error_code error;
+
+    if (!fs::is_regular_file(originalPath, error) || error) {
+        return 0.0;
+    }
+
+    error.clear();
+
+    if (!fs::is_regular_file(compressedPath, error) || error) {
         return 0.0;
     }
 
     const std::uintmax_t originalSize =
-        fs::file_size(originalPath);
+        fs::file_size(originalPath, error);
+
+    if (error || originalSize == 0) {
+        return 0.0;
+    }
 
     const std::uintmax_t compressedSize =
-        fs::file_size(compressedPath);
+        fs::file_size(compressedPath, error);
 
-    const double saved =
-        static_cast<double>(originalSize - compressedSize);
+    if (error || compressedSize >= originalSize) {
+        return 0.0;
+    }
+
+    const std::uintmax_t savedBytes =
+        originalSize - compressedSize;
 
     return (
-        saved / static_cast<double>(originalSize)
+        static_cast<double>(savedBytes) /
+        static_cast<double>(originalSize)
     ) * 100.0;
 }

@@ -292,9 +292,16 @@ bool restoreArchive(
         << outputPath.string()
         << "\n";
 
+    const unsigned int outputPermissions =
+        metadata.hasOriginalPermissions
+            ? metadata.originalPermissions
+            : 0600U;
+
     if (!decompressFile(
             metadata.archivePath,
-            outputPath.string())) {
+            outputPath.string(),
+        metadata.originalSize,
+        outputPermissions)) {
 
         std::cerr
             << "Restore error: decompression failed.\n";

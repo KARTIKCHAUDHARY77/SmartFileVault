@@ -23,7 +23,11 @@ static bool roundTrip(
 
     return testsupport::writeAllBytes(source, bytes) &&
            compressFile(source.string(), packed.string()) &&
-           decompressFile(packed.string(), restored.string()) &&
+           decompressFile(
+               packed.string(),
+               restored.string(),
+               static_cast<std::uintmax_t>(bytes.size())
+           ) &&
            testsupport::readAllBytes(restored, back) &&
            back == bytes;
 }

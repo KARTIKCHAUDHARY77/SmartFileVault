@@ -2,12 +2,90 @@
 #include "compression.h"
 
 #include <filesystem>
+#include <cerrno>
+#include <fcntl.h>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
+
+static bool syncFileDescriptor(int descriptor)
+{
+#if defined(__APPLE__) && defined(F_FULLFSYNC)
+    if (::fcntl(descriptor, F_FULLFSYNC) == 0) {
+        return true;
+    }
+
+    if (errno != EINVAL && errno != ENOTSUP && errno != ENOTTY) {
+        return false;
+    }
+#endif
+
+    return ::fsync(descriptor) == 0;
+}
+
+static bool syncFilePath(const fs::path& path)
+{
+    const int descriptor = ::open(path.c_str(), O_WRONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = syncFileDescriptor(descriptor);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
+
+static bool syncDirectoryPath(const fs::path& path)
+{
+    const int descriptor = ::open(path.c_str(), O_RDONLY);
+    if (descriptor < 0) {
+        return false;
+    }
+
+    bool success = (::fsync(descriptor) == 0);
+    int savedError = errno;
+
+    if (::close(descriptor) != 0 && success) {
+        success = false;
+        savedError = errno;
+    }
+
+    if (!success) {
+        errno = savedError;
+    }
+
+    return success;
+}
+
+static bool isUnsignedDecimal(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+
+    for (unsigned char character : value) {
+        if (character < '0' || character > '9') {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 static std::string makeArchiveId()
 {
@@ -64,8 +142,38 @@ bool saveArchiveMetadata(
     file << metadata.compressedSize << '\n';
     file << metadata.compressionPercentage << '\n';
     file << metadata.archivedAt << '\n';
+    if (metadata.hasOriginalPermissions) {
+        file << metadata.originalPermissions << '\n';
+    }
 
-    return file.good();
+    file.flush();
+    if (!file.good()) {
+        return false;
+    }
+
+    file.close();
+    if (file.fail()) {
+        return false;
+    }
+
+    // The metadata must reach stable storage before archiveAndRemoveOriginal
+    // is allowed to remove the only source copy.
+    if (!syncFilePath(fs::path(metadataPath))) {
+        std::cerr << "Metadata error: could not sync metadata file.\n";
+        return false;
+    }
+
+    fs::path parent = fs::path(metadataPath).parent_path();
+    if (parent.empty()) {
+        parent = ".";
+    }
+
+    if (!syncDirectoryPath(parent)) {
+        std::cerr << "Metadata error: could not sync metadata directory.\n";
+        return false;
+    }
+
+    return true;
 }
 
 bool loadArchiveMetadata(
@@ -88,6 +196,11 @@ bool loadArchiveMetadata(
     std::string compressedSizeText;
     std::string percentageText;
     std::string archivedAtText;
+    std::string originalPermissionsText;
+    bool hasOriginalPermissionsLine = false;
+
+    metadata.originalPermissions = 0600;
+    metadata.hasOriginalPermissions = false;
 
     if (!std::getline(file, metadata.archiveId)) {
         std::cerr << "Metadata error: archiveId missing.\n";
@@ -129,6 +242,14 @@ bool loadArchiveMetadata(
         return false;
     }
 
+    if (std::getline(file, originalPermissionsText)) {
+        hasOriginalPermissionsLine = true;
+    }
+    else if (!file.eof()) {
+        std::cerr << "Metadata error: could not read permissions.\n";
+        return false;
+    }
+
     auto cleanLine = [](std::string& value)
     {
         // Remove Windows-style carriage return if present.
@@ -162,6 +283,9 @@ bool loadArchiveMetadata(
     cleanLine(compressedSizeText);
     cleanLine(percentageText);
     cleanLine(archivedAtText);
+    if (hasOriginalPermissionsLine) {
+        cleanLine(originalPermissionsText);
+    }
 
     if (metadata.archiveId.empty()) {
         std::cerr << "Metadata error: archiveId is empty.\n";
@@ -240,6 +364,29 @@ bool loadArchiveMetadata(
                 << "Metadata error: invalid archive timestamp.\n";
             return false;
         }
+
+        if (hasOriginalPermissionsLine) {
+            if (!isUnsignedDecimal(originalPermissionsText)) {
+                std::cerr
+                    << "Metadata error: invalid original permissions.\n";
+                return false;
+            }
+
+            position = 0;
+            const unsigned long permissions =
+                std::stoul(originalPermissionsText, &position);
+
+            if (position != originalPermissionsText.size() ||
+                permissions > 0777UL) {
+                std::cerr
+                    << "Metadata error: original permissions are out of range.\n";
+                return false;
+            }
+
+            metadata.originalPermissions =
+                static_cast<std::uint32_t>(permissions);
+            metadata.hasOriginalPermissions = true;
+        }
     }
     catch (const std::exception& error) {
 
@@ -265,6 +412,20 @@ bool createArchive(
 
         return false;
     }
+
+    metadata.originalPermissions = 0600;
+    metadata.hasOriginalPermissions = false;
+
+    struct stat inputStatus {};
+    if (::stat(inputPath.c_str(), &inputStatus) != 0) {
+        std::cerr << "Archive error: could not read original permissions.\n";
+        return false;
+    }
+
+    // Preserve only ordinary rwx bits. Special bits are not restored.
+    metadata.originalPermissions =
+        static_cast<std::uint32_t>(inputStatus.st_mode & 0777);
+    metadata.hasOriginalPermissions = true;
 
     std::string compressedFolder =
         archiveRoot + "/compressed";
@@ -292,6 +453,20 @@ bool createArchive(
         return false;
     }
 
+    // Persist the archive's directory entries before publishing data inside
+    // its compressed/metadata subdirectories.
+    fs::path archiveRootPath(archiveRoot);
+    fs::path archiveRootParent = archiveRootPath.parent_path();
+    if (archiveRootParent.empty()) {
+        archiveRootParent = ".";
+    }
+
+    if (!syncDirectoryPath(archiveRootParent) ||
+        !syncDirectoryPath(archiveRootPath)) {
+        std::cerr << "Archive error: could not sync archive directories.\n";
+        return false;
+    }
+
     std::string archiveId =
         makeArchiveId();
 
@@ -310,6 +485,16 @@ bool createArchive(
             inputPath,
             compressedPath
         )) {
+        // A publication-directory sync can fail after the destination link
+        // was created. Remove that exact generated path before returning so
+        // a failed createArchive call cannot leave an untracked archive.
+        error.clear();
+        fs::remove(compressedPath, error);
+        if (error) {
+            std::cerr
+                << "Archive cleanup warning: could not remove failed output: "
+                << error.message() << '\n';
+        }
 
         return false;
     }

@@ -84,8 +84,19 @@ int main()
         return 1;
     }
 
+    const auto originalSize = fs::file_size(original, error);
+
+    if (error) {
+        std::cerr << "FAIL: Could not inspect original file size.\n";
+        return 1;
+    }
+
     const bool restored =
-        decompressFile(compressed.string(), output.string());
+        decompressFile(
+            compressed.string(),
+            output.string(),
+            originalSize
+        );
 
     if (restored) {
         std::cerr
