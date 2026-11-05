@@ -297,11 +297,20 @@ bool restoreArchive(
             ? metadata.originalPermissions
             : 0600U;
 
+    // Legacy metadata has no digest and continues through the compatible
+    // size/GZIP validation path. New metadata must pass SHA-256 verification
+    // before decompressFile atomically publishes the restored output.
+    const std::string expectedSha256 =
+        metadata.hasOriginalSha256
+            ? metadata.originalSha256
+            : std::string{};
+
     if (!decompressFile(
             metadata.archivePath,
             outputPath.string(),
-        metadata.originalSize,
-        outputPermissions)) {
+            metadata.originalSize,
+            outputPermissions,
+            expectedSha256)) {
 
         std::cerr
             << "Restore error: decompression failed.\n";

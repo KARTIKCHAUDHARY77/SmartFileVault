@@ -1,6 +1,8 @@
 #include "archive.h"
 #include "compression.h"
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <cctype>
 #include <cmath>
@@ -10,6 +12,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+#include <vector>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -118,6 +121,29 @@ static bool parseUnsignedDecimal(
     return true;
 }
 
+// A SHA-256 digest must contain exactly 64 ASCII hexadecimal characters.
+static bool isValidSha256Hex(const std::string& digest)
+{
+    if (digest.size() != 64) {
+        return false;
+    }
+
+    for (unsigned char character : digest) {
+        const bool isDigit =
+            character >= '0' && character <= '9';
+        const bool isLowerHex =
+            character >= 'a' && character <= 'f';
+        const bool isUpperHex =
+            character >= 'A' && character <= 'F';
+
+        if (!isDigit && !isLowerHex && !isUpperHex) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static std::string makeArchiveId()
 {
     auto now =
@@ -157,14 +183,19 @@ bool saveArchiveMetadata(
     const ArchiveMetadata& metadata
 )
 {
-    std::ofstream file(
-        metadataPath
-    );
+    if (metadata.hasOriginalSha256 &&
+        !isValidSha256Hex(metadata.originalSha256)) {
+        std::cerr << "Metadata error: invalid SHA-256 digest.\n";
+        return false;
+    }
+
+    std::ofstream file(metadataPath);
 
     if (!file) {
         return false;
     }
 
+    // The first eight metadata lines are the legacy, stable schema.
     file << metadata.archiveId << '\n';
     file << metadata.originalName << '\n';
     file << metadata.originalPath << '\n';
@@ -173,8 +204,16 @@ bool saveArchiveMetadata(
     file << metadata.compressedSize << '\n';
     file << metadata.compressionPercentage << '\n';
     file << metadata.archivedAt << '\n';
+
+    // Keep the existing optional permissions field in its original position.
     if (metadata.hasOriginalPermissions) {
         file << metadata.originalPermissions << '\n';
+    }
+
+    // The digest is appended after permissions, or occupies line nine when
+    // the permissions field is absent.
+    if (metadata.hasOriginalSha256) {
+        file << "SHA256:" << metadata.originalSha256 << '\n';
     }
 
     file.flush();
@@ -227,11 +266,12 @@ bool loadArchiveMetadata(
     std::string compressedSizeText;
     std::string percentageText;
     std::string archivedAtText;
-    std::string originalPermissionsText;
-    bool hasOriginalPermissionsLine = false;
+    std::vector<std::string> optionalLines;
 
     metadata.originalPermissions = 0600;
     metadata.hasOriginalPermissions = false;
+    metadata.originalSha256.clear();
+    metadata.hasOriginalSha256 = false;
 
     if (!std::getline(file, metadata.archiveId)) {
         std::cerr << "Metadata error: archiveId missing.\n";
@@ -273,14 +313,6 @@ bool loadArchiveMetadata(
         return false;
     }
 
-    if (std::getline(file, originalPermissionsText)) {
-        hasOriginalPermissionsLine = true;
-    }
-    else if (!file.eof()) {
-        std::cerr << "Metadata error: could not read permissions.\n";
-        return false;
-    }
-
     auto cleanLine = [](std::string& value)
     {
         // Remove Windows-style carriage return if present.
@@ -305,14 +337,6 @@ bool loadArchiveMetadata(
         }
     };
 
-    cleanLine(metadata.archiveId);
-    cleanLine(metadata.originalName);
-    cleanLine(metadata.originalPath);
-    cleanLine(metadata.archivePath);
-
-    // getline() retains the carriage return from Windows CRLF files.
-    // Remove only that line-ending character from numeric fields.
-    // Spaces, tabs, signs, and other characters remain invalid.
     auto stripCarriageReturn = [](std::string& value)
     {
         if (!value.empty() && value.back() == '\r') {
@@ -320,13 +344,34 @@ bool loadArchiveMetadata(
         }
     };
 
+    cleanLine(metadata.archiveId);
+    cleanLine(metadata.originalName);
+    cleanLine(metadata.originalPath);
+    cleanLine(metadata.archivePath);
+
+    // Numeric fields are strict: strip only the CR from a CRLF line ending.
+    // Whitespace, signs and other characters remain invalid.
     stripCarriageReturn(originalSizeText);
     stripCarriageReturn(compressedSizeText);
     stripCarriageReturn(percentageText);
     stripCarriageReturn(archivedAtText);
 
-    if (hasOriginalPermissionsLine) {
-        stripCarriageReturn(originalPermissionsText);
+    // Read at most two optional trailing lines: permissions and SHA-256.
+    // Eight-line legacy metadata therefore remains valid.
+    std::string optionalLine;
+    while (std::getline(file, optionalLine)) {
+        stripCarriageReturn(optionalLine);
+        optionalLines.push_back(optionalLine);
+
+        if (optionalLines.size() > 2) {
+            std::cerr << "Metadata error: unexpected trailing metadata lines.\n";
+            return false;
+        }
+    }
+
+    if (file.bad()) {
+        std::cerr << "Metadata error: could not read trailing metadata.\n";
+        return false;
     }
 
     if (metadata.archiveId.empty()) {
@@ -349,8 +394,48 @@ bool loadArchiveMetadata(
         return false;
     }
 
-    try {
+    std::string originalPermissionsText;
+    std::string digestText;
+    bool hasOriginalPermissionsLine = false;
+    bool hasDigestLine = false;
 
+    const std::string digestPrefix = "SHA256:";
+
+    if (optionalLines.size() == 1) {
+        if (optionalLines[0].compare(
+                0, digestPrefix.size(), digestPrefix
+            ) == 0) {
+            digestText = optionalLines[0].substr(digestPrefix.size());
+            hasDigestLine = true;
+        } else {
+            originalPermissionsText = optionalLines[0];
+            hasOriginalPermissionsLine = true;
+        }
+    }
+    else if (optionalLines.size() == 2) {
+        // With two trailing lines, the only supported order is permissions
+        // followed by the SHA-256 record.
+        originalPermissionsText = optionalLines[0];
+        hasOriginalPermissionsLine = true;
+
+        if (optionalLines[1].compare(
+                0, digestPrefix.size(), digestPrefix
+            ) != 0) {
+            std::cerr << "Metadata error: invalid SHA-256 metadata record.\n";
+            return false;
+        }
+
+        digestText = optionalLines[1].substr(digestPrefix.size());
+        hasDigestLine = true;
+    }
+
+    if (hasDigestLine && !isValidSha256Hex(digestText)) {
+        std::cerr
+            << "Metadata error: SHA-256 digest must contain exactly 64 hexadecimal characters.\n";
+        return false;
+    }
+
+    try {
         std::uintmax_t parsedOriginalSize = 0;
         std::uintmax_t parsedCompressedSize = 0;
         std::uintmax_t parsedTimestamp = 0;
@@ -411,7 +496,7 @@ bool loadArchiveMetadata(
             }
         }
 
-        // Assign numeric fields only after all numeric values have passed validation.
+        // Assign fields only after all supported metadata values validate.
         metadata.originalSize = parsedOriginalSize;
         metadata.compressedSize = parsedCompressedSize;
         metadata.compressionPercentage = parsedPercentage;
@@ -422,14 +507,17 @@ bool loadArchiveMetadata(
                 static_cast<std::uint32_t>(parsedPermissions);
             metadata.hasOriginalPermissions = true;
         }
+
+        if (hasDigestLine) {
+            metadata.originalSha256 = digestText;
+            metadata.hasOriginalSha256 = true;
+        }
     }
     catch (const std::exception& error) {
-
         std::cerr
             << "Metadata conversion error: "
             << error.what()
             << "\n";
-
         return false;
     }
 
@@ -450,6 +538,8 @@ bool createArchive(
 
     metadata.originalPermissions = 0600;
     metadata.hasOriginalPermissions = false;
+    metadata.originalSha256.clear();
+    metadata.hasOriginalSha256 = false;
 
     struct stat inputStatus {};
     if (::stat(inputPath.c_str(), &inputStatus) != 0) {
@@ -516,9 +606,15 @@ bool createArchive(
         originalName +
         ".gz";
 
+    // Capture the digest that compression verified against the source bytes
+    // before, during, and after compression. It is published only when the
+    // compressed output itself is successfully published.
+    std::string originalSha256;
+
     if (!compressFile(
             inputPath,
-            compressedPath
+            compressedPath,
+            &originalSha256
         )) {
         // A publication-directory sync can fail after the destination link
         // was created. Remove that exact generated path before returning so
@@ -590,6 +686,9 @@ bool createArchive(
 
     metadata.compressionPercentage =
         percentage;
+
+    metadata.originalSha256 = originalSha256;
+    metadata.hasOriginalSha256 = true;
 
     auto now =
         std::chrono::system_clock::now();

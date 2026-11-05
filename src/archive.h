@@ -23,6 +23,11 @@ struct ArchiveMetadata {
     // with the restrictive 0600 fallback.
     std::uint32_t originalPermissions = 0600;
     bool hasOriginalPermissions = false;
+
+     // SHA-256 digest of the original, uncompressed file contents.
+    // Legacy metadata files do not contain this field.
+    std::string originalSha256;
+    bool hasOriginalSha256 = false;
 };
 
 bool createArchive(

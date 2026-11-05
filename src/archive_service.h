@@ -5,6 +5,13 @@
 
 #include <string>
 
+#ifdef SFV_ENABLE_TEST_HOOK
+// Test-only callback invoked immediately before archive verification.
+void setArchiveServiceTestHook(
+    void (*hook)(const std::string& archivePath)
+);
+#endif
+
 bool archiveAndRemoveOriginal(
     const std::string& filePath,
     const std::string& archiveRoot,

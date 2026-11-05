@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <openssl/evp.h>
 #include <string>
 #include <stdlib.h>
@@ -350,10 +351,74 @@ static bool hashFile(
     return success;
 }
 
+static int hexNibble(unsigned char character)
+{
+    if (character >= '0' && character <= '9') {
+        return static_cast<int>(character - '0');
+    }
+
+    if (character >= 'a' && character <= 'f') {
+        return static_cast<int>(character - 'a') + 10;
+    }
+
+    if (character >= 'A' && character <= 'F') {
+        return static_cast<int>(character - 'A') + 10;
+    }
+
+    return -1;
+}
+
+static bool parseSha256Hex(
+    const std::string& text,
+    Sha256Hash& hash
+)
+{
+    if (text.size() != hash.size() * 2U) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < hash.size(); ++index) {
+        const int high = hexNibble(
+            static_cast<unsigned char>(text[index * 2U])
+        );
+        const int low = hexNibble(
+            static_cast<unsigned char>(text[index * 2U + 1U])
+        );
+
+        if (high < 0 || low < 0) {
+            return false;
+        }
+
+        hash[index] = static_cast<unsigned char>((high << 4) | low);
+    }
+
+    return true;
+}
+
+static std::string sha256ToLowerHex(const Sha256Hash& hash)
+{
+    static constexpr char digits[] = "0123456789abcdef";
+
+    std::string text;
+    text.reserve(hash.size() * 2U);
+
+    for (unsigned char byte : hash) {
+        text.push_back(digits[(byte >> 4U) & 0x0FU]);
+        text.push_back(digits[byte & 0x0FU]);
+    }
+
+    return text;
+}
+
 bool compressFile(
     const std::string& inputPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    std::string* originalSha256
 ) {
+    if (originalSha256 != nullptr) {
+        originalSha256->clear();
+    }
+
     // Prevent attempts to compress a file onto itself.
     try {
         if (fs::absolute(inputPath).lexically_normal() ==
@@ -515,16 +580,59 @@ bool compressFile(
         return false;
     }
 
+    // Prepare the digest before publication, but expose it to the caller
+    // only after the compressed output has been durably published.
+    std::string digestText;
+    if (originalSha256 != nullptr) {
+        digestText = sha256ToLowerHex(hashDuring);
+    }
+
     // Atomically publish without overwriting an existing destination.
-    return temporaryOutput.publish();
+    if (!temporaryOutput.publish()) {
+        return false;
+    }
+
+    if (originalSha256 != nullptr) {
+        originalSha256->swap(digestText);
+    }
+
+    return true;
 }
 
 bool decompressFile(
     const std::string& compressedPath,
     const std::string& outputPath,
     std::uintmax_t expectedOutputBytes,
-    unsigned int outputPermissions
+    unsigned int outputPermissions,
+    const std::string& expectedSha256
 ) {
+    Sha256Hash expectedHash{};
+    const bool verifySha256 = !expectedSha256.empty();
+
+    if (verifySha256 && !parseSha256Hex(expectedSha256, expectedHash)) {
+        std::cerr << "Decompression error: expected SHA-256 must contain exactly 64 hexadecimal characters.\n";
+        return false;
+    }
+
+    // Keep the EVP context under RAII so every early return releases it.
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> digestContext(
+        nullptr,
+        &EVP_MD_CTX_free
+    );
+
+    if (verifySha256) {
+        digestContext.reset(EVP_MD_CTX_new());
+        if (!digestContext ||
+            EVP_DigestInit_ex(
+                digestContext.get(),
+                EVP_sha256(),
+                nullptr
+            ) != 1) {
+            std::cerr << "Decompression error: could not initialize SHA-256.\n";
+            return false;
+        }
+    }
+
     // Read the GZIP stream directly so we can enforce an exact output bound
     // and reject trailing bytes or concatenated GZIP members.
     std::ifstream input(
@@ -634,6 +742,16 @@ bool decompressFile(
                 break;
             }
 
+            if (verifySha256 &&
+                EVP_DigestUpdate(
+                    digestContext.get(),
+                    outputBuffer,
+                    producedBytes
+                ) != 1) {
+                success = false;
+                break;
+            }
+
             totalOutputBytes +=
                 static_cast<std::uintmax_t>(producedBytes);
         }
@@ -696,6 +814,24 @@ bool decompressFile(
     // Reject short output as well as output that exceeds the bound.
     if (!streamEnded || totalOutputBytes != expectedOutputBytes) {
         success = false;
+    }
+
+    // Verify decompressed contents while they are still private in the
+    // temporary file. A mismatch must never reach atomic publication.
+    if (success && verifySha256) {
+        Sha256Hash actualHash{};
+        unsigned int hashLength = 0;
+
+        if (EVP_DigestFinal_ex(
+                digestContext.get(),
+                actualHash.data(),
+                &hashLength
+            ) != 1 ||
+            hashLength != static_cast<unsigned int>(actualHash.size()) ||
+            actualHash != expectedHash) {
+            std::cerr << "Decompression error: SHA-256 verification failed.\n";
+            success = false;
+        }
     }
 
     if (std::fflush(output) != 0) {

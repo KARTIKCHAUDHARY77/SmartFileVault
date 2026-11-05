@@ -6,14 +6,16 @@
 
 bool compressFile(
     const std::string& inputPath,
-    const std::string& outputPath
+    const std::string& outputPath,
+    std::string* originalSha256 = nullptr
 );
 
 bool decompressFile(
     const std::string& compressedPath,
     const std::string& outputPath,
     std::uintmax_t expectedOutputBytes,
-    unsigned int outputPermissions = 0600U
+    unsigned int outputPermissions = 0600U,
+    const std::string& expectedSha256 = {}
 );
 
 bool compressionProvidesBenefit(
