@@ -11,6 +11,17 @@
 
 namespace fs = std::filesystem;
 
+#ifdef SFV_ENABLE_TEST_HOOK
+static void (*archiveServiceTestHook)(const std::string&) = nullptr;
+
+void setArchiveServiceTestHook(
+    void (*hook)(const std::string& archivePath)
+)
+{
+    archiveServiceTestHook = hook;
+}
+#endif
+
 static fs::path getMetadataPath(
     const std::string& archiveRoot,
     const std::string& archiveId
@@ -178,11 +189,27 @@ bool archiveAndRemoveOriginal(
         return false;
     }
 
-    // Decompress the new archive into a temporary verification file.
+#ifdef SFV_ENABLE_TEST_HOOK
+    // Allow deterministic archive-corruption tests. This code is absent
+    // from normal builds unless the explicit test macro is enabled.
+    if (archiveServiceTestHook != nullptr) {
+        archiveServiceTestHook(metadata.archivePath);
+    }
+#endif
+
+    // Verify the decompressed temporary output against the saved source
+    // digest before decompressFile atomically publishes the verification file.
+    const std::string expectedSha256 =
+        metadata.hasOriginalSha256
+            ? metadata.originalSha256
+            : std::string{};
+
     if (!decompressFile(
             metadata.archivePath,
             verifyPath.string(),
-            metadata.originalSize
+            metadata.originalSize,
+            0600U,
+            expectedSha256
         )) {
         removeGeneratedPath(
             verifyPath,
