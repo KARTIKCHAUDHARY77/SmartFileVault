@@ -357,9 +357,9 @@ LAUNCHER_VAULT="$RUN_DIR/launcher-vault"
 LAUNCHER_LOG="$RUN_DIR/launcher.log"
 (
     cd "$RUN_DIR"
-    SFV_VAULT_ROOT="$LAUNCHER_VAULT" \
-    SFV_SKIP_OPEN=1 \
-    bash "$ROOT/scripts/run_smartfilevault.sh"
+    export SFV_VAULT_ROOT="$LAUNCHER_VAULT"
+    export SFV_SKIP_OPEN=1
+    exec bash "$ROOT/scripts/run_smartfilevault.sh"
 ) >"$LAUNCHER_LOG" 2>&1 &
 LAUNCHER_PID="$!"
 
