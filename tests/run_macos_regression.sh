@@ -27,8 +27,13 @@ BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-build.XXXXXX")"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-run.XXXXXX")"
 SERVER_PID=""
 PRODUCTION_SERVER_PID=""
+LAUNCHER_PID=""
 
 cleanup() {
+    if [[ -n "$LAUNCHER_PID" ]]; then
+        kill -TERM "$LAUNCHER_PID" >/dev/null 2>&1 || true
+        wait "$LAUNCHER_PID" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$PRODUCTION_SERVER_PID" ]]; then
         kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
         wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
@@ -338,6 +343,79 @@ fi
 echo
 echo "========== FRONTEND STATE REGRESSION =========="
 node tests/frontend_state_test.js
+
+# Stop the standalone smoke API before testing the production launcher.
+kill "$SERVER_PID" >/dev/null 2>&1 || true
+wait "$SERVER_PID" >/dev/null 2>&1 || true
+SERVER_PID=""
+
+# The launcher must work even when called from outside the repository root.
+# SFV_SKIP_OPEN keeps this CI test headless while exercising real startup/cleanup.
+echo
+echo "========== PRODUCTION LAUNCHER WORKING-DIRECTORY TEST =========="
+LAUNCHER_VAULT="$RUN_DIR/launcher-vault"
+LAUNCHER_LOG="$RUN_DIR/launcher.log"
+(
+    cd "$RUN_DIR"
+    SFV_VAULT_ROOT="$LAUNCHER_VAULT" \
+    SFV_SKIP_OPEN=1 \
+    bash "$ROOT/scripts/run_smartfilevault.sh"
+) >"$LAUNCHER_LOG" 2>&1 &
+LAUNCHER_PID="$!"
+
+LAUNCHER_READY=0
+for attempt in $(seq 1 100); do
+    if ! kill -0 "$LAUNCHER_PID" >/dev/null 2>&1; then
+        echo "ERROR: production launcher exited during startup." >&2
+        cat "$LAUNCHER_LOG" >&2
+        exit 1
+    fi
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:8081/ -o "$RUN_DIR/launcher-index.html" &&
+       curl --silent --show-error --fail \
+        http://127.0.0.1:8080/api/dashboard -o "$RUN_DIR/launcher-dashboard.json"; then
+        LAUNCHER_READY=1
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$LAUNCHER_READY" -ne 1 ]]; then
+    echo "ERROR: production launcher did not serve frontend and API." >&2
+    cat "$LAUNCHER_LOG" >&2
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/launcher-index.html" "$RUN_DIR/launcher-dashboard.json" "$LAUNCHER_VAULT" <<'PY'
+import json
+import pathlib
+import sys
+
+index = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+dashboard = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+vault = pathlib.Path(sys.argv[3])
+
+if "SmartFileVault" not in index:
+    raise SystemExit("Launcher frontend response did not contain the app HTML")
+if dashboard.get("archiveCount") != 0 or dashboard.get("archives") != []:
+    raise SystemExit("Launcher API did not use the isolated empty vault")
+if not vault.is_dir():
+    raise SystemExit("Launcher did not create the configured vault")
+print("PASS: launcher serves the frontend when invoked from another directory")
+print("PASS: launcher API uses the configured disposable vault")
+PY
+
+kill -TERM "$LAUNCHER_PID" >/dev/null 2>&1 || true
+wait "$LAUNCHER_PID" >/dev/null 2>&1 || true
+LAUNCHER_PID=""
+
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1 ||
+   lsof -nP -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: production launcher left a server process listening after shutdown." >&2
+    cat "$LAUNCHER_LOG" >&2
+    exit 1
+fi
+echo "PASS: launcher termination stops both local servers"
 
 echo
 echo "========== MACOS REGRESSION SMOKE SUITE PASSED =========="
