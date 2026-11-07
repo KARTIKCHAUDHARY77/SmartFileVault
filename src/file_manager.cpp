@@ -5,9 +5,11 @@
 
 namespace fs = std::filesystem;
 
-static void recordSkipped(FileScanResult& result,
-                          const std::string& path,
-                          const std::string& reason)
+static void recordSkipped(
+    FileScanResult& result,
+    const std::string& path,
+    const std::string& reason
+)
 {
     result.skippedDetails.push_back({path, reason});
     result.skippedFiles =
@@ -20,9 +22,11 @@ static bool isTemporaryOutputName(const fs::path& path)
     return name.rfind(".sfv-output-", 0) == 0;
 }
 
-bool scanDirectory(const std::string& directoryPath,
-                   int inactiveDays,
-                   FileScanResult& result)
+bool scanDirectory(
+    const std::string& directoryPath,
+    int inactiveDays,
+    FileScanResult& result
+)
 {
     result.files.clear();
     result.skippedFiles = 0;
@@ -45,7 +49,11 @@ bool scanDirectory(const std::string& directoryPath,
 
     try {
         fs::recursive_directory_iterator iterator(
-            root, fs::directory_options::skip_permission_denied, error);
+            root,
+            fs::directory_options::skip_permission_denied,
+            error
+        );
+
         const fs::recursive_directory_iterator end;
 
         if (error) {
@@ -61,61 +69,100 @@ bool scanDirectory(const std::string& directoryPath,
 
                 if (iterator->is_symlink(typeError)) {
                     // Intentionally ignore symbolic links.
-                } else if (typeError) {
-                    recordSkipped(result, itemPath.string(),
-                                  typeError.message());
-                } else if (isTemporaryOutputName(itemPath)) {
-                    // Compression creates these in the destination directory.
-                    // Ignore them (and prune a matching staging directory) but
-                    // never remove or modify a scanner-discovered entry.
+                }
+                else if (typeError) {
+                    recordSkipped(
+                        result,
+                        itemPath.string(),
+                        typeError.message()
+                    );
+                }
+                else if (isTemporaryOutputName(itemPath)) {
+                    // Ignore SmartFileVault compression temporary files.
+                    // Do not delete or modify them.
+                    // Do not scan inside matching temporary directories.
                     std::error_code directoryError;
+
                     if (iterator->is_directory(directoryError) &&
                         !directoryError) {
                         iterator.disable_recursion_pending();
                     }
-                } else if (iterator->is_regular_file(typeError)) {
+                }
+                else if (iterator->is_regular_file(typeError)) {
                     if (typeError) {
-                        recordSkipped(result, itemPath.string(),
-                                      typeError.message());
-                    } else {
+                        recordSkipped(
+                            result,
+                            itemPath.string(),
+                            typeError.message()
+                        );
+                    }
+                    else {
                         FileMetadata metadata{};
 
-                        if (getFileMetadata(itemPath.string(),
-                                            inactiveDays, metadata)) {
+                        if (getFileMetadata(
+                                itemPath.string(),
+                                inactiveDays,
+                                metadata
+                            )) {
                             result.files.push_back(metadata);
-                        } else {
+                        }
+                        else {
                             recordSkipped(
-                                result, itemPath.string(),
-                                "Could not read file metadata");
+                                result,
+                                itemPath.string(),
+                                "Could not read file metadata"
+                            );
                         }
                     }
-                } else if (typeError) {
-                    recordSkipped(result, itemPath.string(),
-                                  typeError.message());
                 }
-            } catch (const std::exception& exception) {
-                recordSkipped(result, itemPath.string(), exception.what());
-            } catch (...) {
-                recordSkipped(result, itemPath.string(),
-                              "Unknown filesystem error");
+                else if (typeError) {
+                    recordSkipped(
+                        result,
+                        itemPath.string(),
+                        typeError.message()
+                    );
+                }
+            }
+            catch (const std::exception& exception) {
+                recordSkipped(
+                    result,
+                    itemPath.string(),
+                    exception.what()
+                );
+            }
+            catch (...) {
+                recordSkipped(
+                    result,
+                    itemPath.string(),
+                    "Unknown filesystem error"
+                );
             }
 
             iterator.increment(error);
 
             if (error) {
-                recordSkipped(result, root.string(),
-                              "Could not continue scanning directory: " +
-                                  error.message());
+                recordSkipped(
+                    result,
+                    root.string(),
+                    "Could not continue scanning directory: " +
+                        error.message()
+                );
                 break;
             }
         }
 
         return true;
-    } catch (const std::exception& exception) {
+    }
+    catch (const std::exception& exception) {
         recordSkipped(result, root.string(), exception.what());
         return true;
-    } catch (...) {
-        recordSkipped(result, root.string(), "Unknown filesystem error");
+    }
+    catch (...) {
+        recordSkipped(
+            result,
+            root.string(),
+            "Unknown filesystem error"
+        );
         return true;
     }
 }

@@ -38,14 +38,13 @@ int main()
             return 1;
         }
 
+        // Normal root-level files.
         {
             std::ofstream file(testFolder / "notes.txt");
             file << "Some notes";
 
             if (!file) {
                 std::cerr << "Could not create notes.txt.\n";
-                std::error_code cleanupError;
-                fs::remove_all(testFolder, cleanupError);
                 return 1;
             }
         }
@@ -56,8 +55,43 @@ int main()
 
             if (!file) {
                 std::cerr << "Could not create project.cpp.\n";
-                std::error_code cleanupError;
-                fs::remove_all(testFolder, cleanupError);
+                return 1;
+            }
+        }
+
+        // Compression temporary files and a similarly named normal file.
+        {
+            std::ofstream active(testFolder / ".sfv-output-active");
+            active << "active temporary output";
+
+            std::ofstream stale(testFolder / ".sfv-output-stale");
+            stale << "stale temporary output";
+
+            std::ofstream ordinary(testFolder / "notes-sfv-output.txt");
+            ordinary << "ordinary user file";
+
+            if (!active || !stale || !ordinary) {
+                std::cerr << "Could not create temporary-file fixtures.\n";
+                return 1;
+            }
+        }
+
+        // Nested directory fixtures.
+        fs::create_directories(testFolder / "nested");
+
+        {
+            std::ofstream nested(
+                testFolder / "nested" / ".sfv-output-nested"
+            );
+            nested << "nested temporary output";
+
+            std::ofstream normal(
+                testFolder / "nested" / "normal.txt"
+            );
+            normal << "normal nested file";
+
+            if (!nested || !normal) {
+                std::cerr << "Could not create nested fixtures.\n";
                 return 1;
             }
         }
@@ -70,8 +104,8 @@ int main()
         );
 
         check(
-            result.files.size() == 2,
-            "both regular files are discovered"
+            result.files.size() == 4,
+            "four normal files are discovered"
         );
 
         check(
@@ -108,21 +142,54 @@ int main()
 
         check(
             names.count("notes.txt") == 1 &&
-                names.count("project.cpp") == 1,
-            "expected filenames are returned"
+            names.count("project.cpp") == 1,
+            "expected original filenames are returned"
         );
 
         check(
             extensions.count(".txt") == 1 &&
-                extensions.count(".cpp") == 1,
+            extensions.count(".cpp") == 1,
             "expected extensions are returned"
         );
 
         check(
             sizesCorrect,
-            "file sizes match written contents"
+            "original file sizes match written contents"
         );
 
+        check(
+            names.count(".sfv-output-active") == 0,
+            "active compression temporary file is ignored"
+        );
+
+        check(
+            names.count(".sfv-output-stale") == 0,
+            "stale compression temporary file is ignored"
+        );
+
+        check(
+            names.count(".sfv-output-nested") == 0,
+            "nested compression temporary file is ignored"
+        );
+
+        check(
+            names.count("notes-sfv-output.txt") == 1,
+            "ordinary similarly named file is discovered"
+        );
+
+        check(
+            names.count("normal.txt") == 1,
+            "normal file inside nested directory is discovered"
+        );
+
+        check(
+            fs::exists(testFolder / ".sfv-output-active") &&
+            fs::exists(testFolder / ".sfv-output-stale") &&
+            fs::exists(testFolder / "nested" / ".sfv-output-nested"),
+            "temporary files remain untouched after scanning"
+        );
+
+        // Invalid input tests.
         FileScanResult invalidResult{};
 
         check(
