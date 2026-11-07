@@ -87,6 +87,19 @@ build_test compression_policy_test \
     src/compression_policy.cpp
 run_test compression_policy_test
 
+# Scanner reliability, invalid input and temporary-output isolation.
+build_test file_manager_test \
+    src/file_manager_test.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp
+run_test file_manager_test
+
+build_test file_manager_temporary_output_test \
+    src/file_manager_temporary_output_test.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp
+run_test file_manager_temporary_output_test
+
 # Strict expected-size GZIP decompression and malformed-stream rejection.
 build_test decompression_limit_test \
     src/decompression_limit_test.cpp \
