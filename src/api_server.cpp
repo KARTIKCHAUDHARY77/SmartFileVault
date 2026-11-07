@@ -802,7 +802,7 @@ bool startApiServer(
         const std::string requestOrigin = getRequestHeader(request, "origin");
         auto respond = [&](int, const std::string& responseBody,
                            const std::string& responseStatus) {
-            respond(clientSocket, responseBody, responseStatus, requestOrigin);
+            sendResponse(clientSocket, responseBody, responseStatus, requestOrigin);
         };
 
         if (request.empty()) {
