@@ -2,9 +2,34 @@
 const API_BASE_URL = "http://localhost:8080";
 
 let apiConnected = false;
-let lastScanResult = JSON.parse(
-    localStorage.getItem("smartFileVaultLastScan") || "null"
-);
+
+const LAST_SCAN_KEY = "smartFileVaultLastScan";
+const INACTIVE_DAYS_KEY = "smartFileVaultInactiveDays";
+
+function readLastScanResult() {
+    try {
+        const stored = localStorage.getItem(LAST_SCAN_KEY);
+        if (!stored) return null;
+
+        const parsed = JSON.parse(stored);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function readSavedInactiveDays() {
+    try {
+        const days = Number(localStorage.getItem(INACTIVE_DAYS_KEY));
+        return [7, 30, 60, 90].includes(days) ? String(days) : "30";
+    } catch {
+        return "30";
+    }
+}
+
+let lastScanResult = readLastScanResult();
 let archiveData = [];
 
 function showConnectionStatus(connected) {
@@ -656,10 +681,11 @@ async function startScan() {
         }
 
         lastScanResult = result;
-        localStorage.setItem(
-            "smartFileVaultLastScan",
-            JSON.stringify(result)
-        );
+        try {
+            localStorage.setItem(LAST_SCAN_KEY, JSON.stringify(result));
+        } catch (error) {
+            console.warn("Could not persist the latest scan summary:", error);
+        }
         alert(
             "Scan completed successfully.\n\n" +
             `Files scanned: ${result.scannedFiles ?? "—"}\n` +
@@ -693,14 +719,28 @@ function saveSettings() {
         return;
     }
 
+    try {
+        localStorage.setItem(INACTIVE_DAYS_KEY, String(days));
+    } catch (error) {
+        if (message) {
+            message.textContent = "Could not save this setting in browser storage.";
+        }
+        return;
+    }
+
     if (message) {
         message.textContent =
-            `Inactivity period set to ${days} days for the next scan.`;
+            `Inactivity period saved as ${days} days for future scans.`;
     }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
     showConnectionStatus(false);
+
+    const inactiveDaysInput = document.getElementById("inactiveDays");
+    if (inactiveDaysInput) {
+        inactiveDaysInput.value = readSavedInactiveDays();
+    }
 
     await updateDashboard();
     await displayFiles();
