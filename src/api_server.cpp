@@ -174,6 +174,49 @@ namespace
     }
 
 
+    std::string getRequestHeader(
+        const std::string& request,
+        const std::string& requestedName)
+    {
+        const std::size_t headerEnd = request.find("\r\n\r\n");
+        const std::string headers = request.substr(0, headerEnd);
+        std::istringstream stream(headers);
+        std::string line;
+        std::getline(stream, line); // Skip request line.
+
+        std::string wanted = requestedName;
+        std::transform(wanted.begin(), wanted.end(), wanted.begin(),
+            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+        while (std::getline(stream, line)) {
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            const std::size_t colon = line.find(':');
+            if (colon == std::string::npos) {
+                continue;
+            }
+
+            std::string name = line.substr(0, colon);
+            std::transform(name.begin(), name.end(), name.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (name != wanted) {
+                continue;
+            }
+
+            std::string value = line.substr(colon + 1);
+            const std::size_t first = value.find_first_not_of(" \t");
+            if (first == std::string::npos) {
+                return "";
+            }
+            const std::size_t last = value.find_last_not_of(" \t");
+            return value.substr(first, last - first + 1);
+        }
+
+        return "";
+    }
+
+
     std::string getPath(const std::string& request)
     {
         std::size_t firstSpace =
@@ -648,15 +691,22 @@ namespace
     void sendResponse(
         int clientSocket,
         const std::string& body,
-        const std::string& status)
+        const std::string& status,
+        const std::string& requestOrigin = "")
     {
         std::string response;
 
         response += "HTTP/1.1 " + status + "\r\n";
         response += "Content-Type: application/json\r\n";
-        response += "Access-Control-Allow-Origin: *\r\n";
-        response += "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n";
-        response += "Access-Control-Allow-Headers: Content-Type\r\n";
+        // Browser access is limited to the loopback frontend started by
+        // scripts/run_smartfilevault.sh. Do not expose the local file API to
+        // arbitrary websites through wildcard CORS.
+        if (requestOrigin == "http://127.0.0.1:8081") {
+            response += "Access-Control-Allow-Origin: http://127.0.0.1:8081\r\n";
+            response += "Vary: Origin\r\n";
+            response += "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n";
+            response += "Access-Control-Allow-Headers: Content-Type\r\n";
+        }
         response += "Content-Length: " +
                     std::to_string(body.size()) + "\r\n";
         response += "Connection: close\r\n";
@@ -749,9 +799,14 @@ bool startApiServer(
         }
 
         std::string request = readRequest(clientSocket);
+        const std::string requestOrigin = getRequestHeader(request, "origin");
+        auto respond = [&](int, const std::string& responseBody,
+                           const std::string& responseStatus) {
+            sendResponse(clientSocket, responseBody, responseStatus, requestOrigin);
+        };
 
         if (request.empty()) {
-            sendResponse(
+            respond(
                 clientSocket,
                 makeError("Invalid or incomplete HTTP request."),
                 "400 Bad Request"
@@ -765,9 +820,22 @@ bool startApiServer(
         std::string path = getPath(request);
         std::string body = getBody(request);
 
+        // Reject browser requests from untrusted origins before routing. This
+        // also blocks simple cross-origin POSTs that do not trigger preflight.
+        if (!requestOrigin.empty() &&
+            requestOrigin != "http://127.0.0.1:8081") {
+            respond(
+                clientSocket,
+                makeError("This local API does not accept requests from this origin."),
+                "403 Forbidden"
+            );
+            close(clientSocket);
+            continue;
+        }
+
         // Browser CORS preflight.
         if (method == "OPTIONS") {
-            sendResponse(clientSocket, "{}", "200 OK");
+            respond(clientSocket, "{}", "200 OK");
             close(clientSocket);
             continue;
         }
@@ -786,7 +854,7 @@ bool startApiServer(
                 ArchiveDeletionResult invalidResult{};
                 invalidResult.errorCode = "invalid_archive_id";
                 invalidResult.message = "The archive ID in the URL is invalid.";
-                sendResponse(
+                respond(
                     clientSocket,
                     makeArchiveDeletionResponse(archiveId, invalidResult, false, false),
                     "400 Bad Request"
@@ -826,7 +894,7 @@ bool startApiServer(
                     }
                 }
 
-                sendResponse(
+                respond(
                     clientSocket,
                     makeArchiveDeletionResponse(
                         archiveId, result, success, reportUpdated
@@ -845,10 +913,10 @@ bool startApiServer(
                 std::string json = readFile(reportPath);
 
                 if (!json.empty()) {
-                    sendResponse(clientSocket, json, "200 OK");
+                    respond(clientSocket, json, "200 OK");
                 }
                 else {
-                    sendResponse(
+                    respond(
                         clientSocket,
                         makeError("Could not read vault report."),
                         "500 Internal Server Error"
@@ -856,7 +924,7 @@ bool startApiServer(
                 }
             }
             else {
-                sendResponse(
+                respond(
                     clientSocket,
                     makeError("Could not create vault report."),
                     "500 Internal Server Error"
@@ -873,10 +941,10 @@ bool startApiServer(
                 std::string json = readFile(reportPath);
 
                 if (!json.empty()) {
-                    sendResponse(clientSocket, json, "200 OK");
+                    respond(clientSocket, json, "200 OK");
                 }
                 else {
-                    sendResponse(
+                    respond(
                         clientSocket,
                         makeError("Could not read archive report."),
                         "500 Internal Server Error"
@@ -884,7 +952,7 @@ bool startApiServer(
                 }
             }
             else {
-                sendResponse(
+                respond(
                     clientSocket,
                     makeError("Could not load archives."),
                     "500 Internal Server Error"
@@ -900,7 +968,7 @@ bool startApiServer(
             std::string json = readFile(reportPath);
 
             if (json.empty()) {
-                sendResponse(
+                respond(
                     clientSocket,
                     makeError(
                         "No scan report available. Run a scan first."
@@ -909,7 +977,7 @@ bool startApiServer(
                 );
             }
             else {
-                sendResponse(clientSocket, json, "200 OK");
+                respond(clientSocket, json, "200 OK");
             }
         }
 
@@ -922,7 +990,7 @@ bool startApiServer(
                 getJsonInt(body, "inactiveDays");
 
             if (folderPath.empty() || inactiveDays <= 0) {
-                sendResponse(
+                respond(
                     clientSocket,
                     makeError("Invalid scan parameters."),
                     "400 Bad Request"
@@ -939,14 +1007,14 @@ bool startApiServer(
                 );
 
                 if (success) {
-                    sendResponse(
+                    respond(
                         clientSocket,
                         makeScanResponse(result),
                         "200 OK"
                     );
                 }
                 else {
-                    sendResponse(
+                    respond(
                         clientSocket,
                         makeError(
                             "Scan and archive operation failed."
@@ -966,7 +1034,7 @@ bool startApiServer(
                 getJsonString(body, "destination");
 
             if (archiveId.empty() || destination.empty()) {
-                sendResponse(
+                respond(
                     clientSocket,
                     makeError("Invalid restore parameters."),
                     "400 Bad Request"
@@ -992,14 +1060,14 @@ bool startApiServer(
                          << "\"\n";
                     json << "}";
 
-                    sendResponse(
+                    respond(
                         clientSocket,
                         json.str(),
                         "200 OK"
                     );
                 }
                 else {
-                    sendResponse(
+                    respond(
                         clientSocket,
                         makeError("Restore operation failed."),
                         "400 Bad Request"
@@ -1010,7 +1078,7 @@ bool startApiServer(
 
         // Unknown endpoint.
         else {
-            sendResponse(
+            respond(
                 clientSocket,
                 makeError("Endpoint not found."),
                 "404 Not Found"

@@ -87,12 +87,51 @@ bash tests/run_macos_regression.sh
 ```
 
 This script builds and runs the core compression round-trip, compression-policy,
-bounded-decompression, and SHA-256 tests. It then builds the C++ API server in
-a disposable directory and runs the non-destructive HTTP smoke tests, request
-parser tests, and frontend JavaScript syntax check. The same script is run by
-the `.github/workflows/macos-regression.yml` workflow for pull requests and
-pushes targeting `main`. This is a targeted regression smoke suite, not a
-claim that every standalone test in `src/` is included.
+scanner reliability and temporary-output isolation, bounded-decompression,
+and SHA-256 tests. It builds the production API entry point, starts it against
+a disposable vault, checks the dashboard and archive endpoints, and validates
+vault-report JSON for filenames containing tabs and quotes. It also builds a
+separate API smoke server and runs HTTP, request-parser, CORS/CSRF, frontend
+syntax, frontend state regression tests, and a production-launcher smoke
+test that starts the app from outside the repository root and verifies that
+both local servers stop cleanly. The same script is run by the
+`.github/workflows/macos-regression.yml` workflow for pull requests and pushes
+targeting `main`. This is a targeted regression smoke suite, not a claim that
+every standalone test in `src/` is included.
+
+### Run the complete web application (macOS)
+
+From the repository root:
+
+```bash
+brew install openssl@3
+bash scripts/run_smartfilevault.sh
+```
+
+The launcher resolves the repository root automatically, builds the
+production API server, starts the frontend and API on loopback-only ports, and
+opens the frontend in your default browser. It can be invoked from another
+working directory. Keep the terminal open while using the application; press
+`Ctrl+C` there to stop both servers.
+
+- Frontend: `http://127.0.0.1:8081/`
+- API: `http://127.0.0.1:8080/`
+- Default vault: `~/Library/Application Support/SmartFileVault/Vault`
+
+To choose a different persistent vault location:
+
+```bash
+SFV_VAULT_ROOT="$HOME/Documents/SmartFileVault-Vault" bash scripts/run_smartfilevault.sh
+```
+
+The browser API only grants CORS access to the local frontend origin started
+by this launcher. Do not open `frontend/index.html` directly as a `file://`
+URL or serve it from another origin; use the launcher.
+
+**Important:** scanning is a filesystem-changing operation. Eligible inactive
+files may be archived and their originals removed after verification. For the
+first run, choose a disposable test folder and verify scan, restore, and delete
+behaviour before selecting personal folders.
 
 ### Build the API test server
 
@@ -137,7 +176,7 @@ Keep the server running while testing. Press `Ctrl+C` in that terminal to stop i
 In another terminal:
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 python3 tests/api_smoke_test.py \
   --base-url http://127.0.0.1:8080
@@ -150,7 +189,7 @@ Only use the smoke test's optional scan mode with disposable test data and the r
 ### Run restore-space safety tests
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/restore_safety_test.cpp \
@@ -185,7 +224,7 @@ This test covers the exact decompressed-size limit, empty files, malformed and t
 ### Run the end-to-end regression test
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/scan_restore_collision_test.cpp \

@@ -11,20 +11,41 @@
 std::string escapeJson(const std::string& text)
 {
     std::string result;
+    const char hexDigits[] = "0123456789abcdef";
 
-    for (char ch : text) {
-
-        if (ch == '\\') {
-            result += "\\\\";
-        }
-        else if (ch == '"') {
-            result += "\\\"";
-        }
-        else if (ch == '\n') {
-            result += "\\n";
-        }
-        else {
-            result += ch;
+    for (unsigned char ch : text) {
+        switch (ch) {
+            case '"':
+                result += "\\\"";
+                break;
+            case '\\':
+                result += "\\\\";
+                break;
+            case '\b':
+                result += "\\b";
+                break;
+            case '\f':
+                result += "\\f";
+                break;
+            case '\n':
+                result += "\\n";
+                break;
+            case '\r':
+                result += "\\r";
+                break;
+            case '\t':
+                result += "\\t";
+                break;
+            default:
+                if (ch < 0x20) {
+                    result += "\\u00";
+                    result += hexDigits[(ch >> 4) & 0x0F];
+                    result += hexDigits[ch & 0x0F];
+                }
+                else {
+                    result += static_cast<char>(ch);
+                }
+                break;
         }
     }
 

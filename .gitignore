@@ -16,3 +16,6 @@ scanner_test
 /api_test_archive/
 /api_test_folder/
 /api_test_restore/
+
+# Local vault data (never commit user archives)
+SmartFileVault_Vault/
