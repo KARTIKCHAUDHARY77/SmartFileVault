@@ -178,7 +178,7 @@ namespace
         const std::string& request,
         const std::string& requestedName)
     {
-        const std::size_t headerEnd = request.find("\\r\\n\\r\\n");
+        const std::size_t headerEnd = request.find("\r\n\r\n");
         const std::string headers = request.substr(0, headerEnd);
         std::istringstream stream(headers);
         std::string line;
@@ -702,10 +702,10 @@ namespace
         // scripts/run_smartfilevault.sh. Do not expose the local file API to
         // arbitrary websites through wildcard CORS.
         if (requestOrigin == "http://127.0.0.1:8081") {
-            response += "Access-Control-Allow-Origin: http://127.0.0.1:8081\\r\\n";
-            response += "Vary: Origin\\r\\n";
-            response += "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\\r\\n";
-            response += "Access-Control-Allow-Headers: Content-Type\\r\\n";
+            response += "Access-Control-Allow-Origin: http://127.0.0.1:8081\r\n";
+            response += "Vary: Origin\r\n";
+            response += "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n";
+            response += "Access-Control-Allow-Headers: Content-Type\r\n";
         }
         response += "Content-Length: " +
                     std::to_string(body.size()) + "\r\n";
