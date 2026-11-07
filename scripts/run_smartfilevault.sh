@@ -99,7 +99,7 @@ for attempt in $(seq 1 100); do
     if curl --silent --show-error --fail \
         "http://127.0.0.1:$UI_PORT/" >/dev/null 2>&1 &&
        curl --silent --show-error --fail \
-        "http://localhost:$API_PORT/api/archives" >/dev/null 2>&1; then
+        "http://127.0.0.1:$API_PORT/api/archives" >/dev/null 2>&1; then
         ready=1
         break
     fi
