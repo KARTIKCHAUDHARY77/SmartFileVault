@@ -26,8 +26,13 @@ fi
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-build.XXXXXX")"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-run.XXXXXX")"
 SERVER_PID=""
+PRODUCTION_SERVER_PID=""
 
 cleanup() {
+    if [[ -n "$PRODUCTION_SERVER_PID" ]]; then
+        kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+        wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$SERVER_PID" ]]; then
         kill "$SERVER_PID" >/dev/null 2>&1 || true
         wait "$SERVER_PID" >/dev/null 2>&1 || true
