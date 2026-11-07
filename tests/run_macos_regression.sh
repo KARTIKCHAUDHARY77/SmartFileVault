@@ -214,6 +214,26 @@ kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
 wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
 PRODUCTION_SERVER_PID=""
 
+# Permanent-delete HTTP integration: verified original removal, repeat-delete
+# handling, encoded traversal rejection, and catalogue/report refresh.
+build_test archive_delete_api_test_server \
+    tests/archive_delete_api_test_server.cpp \
+    src/api_server.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
+    src/vault_report.cpp
+"$PYTHON" tests/archive_delete_api_test.py "$BUILD_DIR/archive_delete_api_test_server"
+
 # The vault report must remain valid JSON even when a legal filename contains
 # tabs or quotes (both are legal characters on macOS/POSIX filesystems).
 build_test vault_report_json_test \
