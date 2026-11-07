@@ -79,7 +79,7 @@ def main() -> int:
         assert status == 403, f"untrusted simple POST returned HTTP {status}, expected 403"
         assert header(headers, "Access-Control-Allow-Origin") is None
         assert fixture.is_file(), "untrusted POST changed or removed the source fixture"
-        assert fixture.read_text(encoding="utf-8").startswith("Untrusted cross-origin")
+        assert fixture.read_text(encoding="utf-8").startswith("SmartFileVault cross-origin scan side-effect sentinel.")
         print("PASS: untrusted simple POST is rejected before scan routing")
         print("PASS: rejected cross-origin POST leaves filesystem fixture unchanged")
 
