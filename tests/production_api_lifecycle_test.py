@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""End-to-end production API scan -> restore -> permanent-delete test.
+
+All source files and vault data are created beneath the caller-supplied
+disposable work directory. No user data or repository files are scanned.
+"""
+
+import argparse
+import json
+import os
+import pathlib
+import time
+import urllib.error
+import urllib.request
+
+
+def request_json(base_url: str, path: str, method: str = "GET", payload=None):
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        base_url + path,
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read()
+            return response.status, json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        try:
+            response_body = json.loads(raw.decode("utf-8"))
+        except Exception:
+            response_body = {"raw": raw.decode("utf-8", errors="replace")}
+        raise AssertionError(
+            f"{method} {path} returned HTTP {error.code}: {response_body}"
+        ) from error
+
+
+def check(condition: bool, description: str) -> None:
+    if not condition:
+        raise AssertionError(description)
+    print(f"PASS: {description}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-url", default="http://127.0.0.1:8080")
+    parser.add_argument("--vault-root", required=True)
+    parser.add_argument("--work-root", required=True)
+    args = parser.parse_args()
+
+    base_url = args.base_url.rstrip("/")
+    vault_root = pathlib.Path(args.vault_root).resolve()
+    work_root = pathlib.Path(args.work_root).resolve()
+    source_root = work_root / "source"
+    restore_root = work_root / "restored"
+
+    source_root.mkdir(parents=True, exist_ok=True)
+    restore_root.mkdir(parents=True, exist_ok=True)
+    check(vault_root.is_dir(), "production vault directory exists")
+
+    eligible = source_root / "eligible.txt"
+    active = source_root / "recent-active.txt"
+    expected = (b"SmartFileVault production lifecycle regression.\n" * 30000)
+    active_bytes = b"Recent active fixture must remain unchanged.\n" * 1000
+    eligible.write_bytes(expected)
+    active.write_bytes(active_bytes)
+
+    old_time = time.time() - (3 * 24 * 60 * 60)
+    os.utime(eligible, (old_time, old_time))
+
+    status, scan = request_json(
+        base_url,
+        "/api/scan",
+        method="POST",
+        payload={"folderPath": str(source_root), "inactiveDays": 1},
+    )
+    check(status == 200 and scan.get("success") is True,
+          "production scan endpoint succeeds")
+    check(scan.get("scannedFiles") == 2,
+          "production scan discovers both disposable fixtures")
+    check(scan.get("inactiveFiles") == 1 and scan.get("archivedFiles") == 1,
+          "only the old eligible fixture is archived")
+    check(not eligible.exists(),
+          "verified archiving removes the eligible source file")
+    check(active.is_file() and active.read_bytes() == active_bytes,
+          "recent active source file remains byte-for-byte unchanged")
+
+    status, catalogue = request_json(base_url, "/api/archives")
+    archives = catalogue.get("archives")
+    check(status == 200 and catalogue.get("archiveCount") == 1,
+          "production archive catalogue contains one archive")
+    check(isinstance(archives, list) and len(archives) == 1,
+          "production archive catalogue returns the archive record")
+
+    record = archives[0]
+    archive_id = record.get("archiveId")
+    check(bool(archive_id), "production archive record contains archiveId")
+    check(record.get("originalName") == eligible.name,
+          "production archive record identifies the eligible source")
+
+    compressed_path = pathlib.Path(record["archivePath"])
+    metadata_path = vault_root / "metadata" / f"{archive_id}.meta"
+    check(compressed_path.is_file() and metadata_path.is_file(),
+          "compressed archive and metadata are published in the production vault")
+
+    status, restored = request_json(
+        base_url,
+        "/api/restore",
+        method="POST",
+        payload={"archiveId": archive_id, "destination": str(restore_root)},
+    )
+    restored_path = pathlib.Path(restored.get("restoredPath", ""))
+    check(status == 200 and restored.get("success") is True,
+          "production restore endpoint succeeds")
+    check(restored_path.is_file() and restored_path.read_bytes() == expected,
+          "restored output is byte-for-byte identical to the original input")
+
+    status, deleted = request_json(
+        base_url,
+        f"/api/archives/{archive_id}",
+        method="DELETE",
+    )
+    check(status == 200 and deleted.get("success") is True,
+          "production DELETE endpoint succeeds")
+    check(deleted.get("archiveDeleted") is True and
+          deleted.get("compressedRemoved") is True and
+          deleted.get("metadataRemoved") is True,
+          "production DELETE removes compressed archive and metadata")
+    check(deleted.get("originalMissing") is True and
+          deleted.get("originalDeleted") is False,
+          "production DELETE reports the already-removed source accurately")
+    check(deleted.get("reportUpdated") is True,
+          "production DELETE regenerates the vault report")
+    check(not compressed_path.exists() and not metadata_path.exists(),
+          "production vault no longer contains the deleted archive artifacts")
+    check(restored_path.is_file() and restored_path.read_bytes() == expected,
+          "restored copy remains available after archive deletion")
+    check(active.is_file() and active.read_bytes() == active_bytes,
+          "active source fixture remains unchanged through the full lifecycle")
+
+    status, final_report = request_json(base_url, "/api/dashboard")
+    check(status == 200 and final_report.get("archiveCount") == 0 and
+          final_report.get("archives") == [] and
+          final_report.get("compressedSize") == 0,
+          "production dashboard reflects the empty vault after deletion")
+
+    print("ALL PRODUCTION API LIFECYCLE TESTS PASSED")
+
+
+if __name__ == "__main__":
+    main()
