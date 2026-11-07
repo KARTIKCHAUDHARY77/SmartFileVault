@@ -87,12 +87,15 @@ bash tests/run_macos_regression.sh
 ```
 
 This script builds and runs the core compression round-trip, compression-policy,
-bounded-decompression, and SHA-256 tests. It then builds the C++ API server in
-a disposable directory and runs the non-destructive HTTP smoke tests, request
-parser tests, and frontend JavaScript syntax check. The same script is run by
-the `.github/workflows/macos-regression.yml` workflow for pull requests and
-pushes targeting `main`. This is a targeted regression smoke suite, not a
-claim that every standalone test in `src/` is included.
+scanner reliability and temporary-output isolation, bounded-decompression,
+and SHA-256 tests. It builds the production API entry point, starts it against
+a disposable vault, checks the dashboard and archive endpoints, and validates
+vault-report JSON for filenames containing tabs and quotes. It also builds a
+separate API smoke server and runs HTTP, request-parser, CORS/CSRF, frontend
+syntax, and frontend state regression tests. The same script is run by the
+`.github/workflows/macos-regression.yml` workflow for pull requests and pushes
+targeting `main`. This is a targeted regression smoke suite, not a claim that
+every standalone test in `src/` is included.
 
 ### Run the complete web application (macOS)
 
@@ -183,7 +186,7 @@ Only use the smoke test's optional scan mode with disposable test data and the r
 ### Run restore-space safety tests
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/restore_safety_test.cpp \
