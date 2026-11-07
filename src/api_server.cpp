@@ -189,7 +189,7 @@ namespace
             [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
         while (std::getline(stream, line)) {
-            if (!line.empty() && line.back() == '\\r') {
+            if (!line.empty() && line.back() == '\r') {
                 line.pop_back();
             }
             const std::size_t colon = line.find(':');
@@ -205,11 +205,11 @@ namespace
             }
 
             std::string value = line.substr(colon + 1);
-            const std::size_t first = value.find_first_not_of(" \\t");
+            const std::size_t first = value.find_first_not_of(" \t");
             if (first == std::string::npos) {
                 return "";
             }
-            const std::size_t last = value.find_last_not_of(" \\t");
+            const std::size_t last = value.find_last_not_of(" \t");
             return value.substr(first, last - first + 1);
         }
 
