@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 CXX="${CXX:-clang++}"
 PYTHON="${PYTHON:-python3}"
 OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3)}"
@@ -9,12 +10,18 @@ VAULT_ROOT="${SFV_VAULT_ROOT:-$HOME/Library/Application Support/SmartFileVault/V
 API_PORT=8080
 UI_PORT=8081
 
-for command_name in "$CXX" "$PYTHON" curl lsof open; do
+for command_name in "$CXX" "$PYTHON" curl lsof; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "ERROR: Required command not found: $command_name" >&2
         exit 1
     fi
 done
+
+if [[ "${SFV_SKIP_OPEN:-0}" != "1" ]] &&
+   ! command -v open >/dev/null 2>&1; then
+    echo "ERROR: Required command not found: open" >&2
+    exit 1
+fi
 
 if [[ ! -d "$OPENSSL_PREFIX/include" || ! -d "$OPENSSL_PREFIX/lib" ]]; then
     echo "ERROR: OpenSSL 3 was not found at $OPENSSL_PREFIX" >&2
@@ -122,5 +129,7 @@ echo
 echo "Scanning can archive files and remove originals after verification."
 echo "Use a disposable test folder for your first scan."
 echo "Press Ctrl+C here to stop both local servers."
-open "http://127.0.0.1:$UI_PORT/"
+if [[ "${SFV_SKIP_OPEN:-0}" != "1" ]]; then
+    open "http://127.0.0.1:$UI_PORT/"
+fi
 wait "$API_PID"
