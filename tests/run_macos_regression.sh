@@ -120,11 +120,16 @@ echo "========== BUILD: API SERVER =========="
 # 36,500-day threshold and a disposable one-file directory.
 API_WORK_DIR="$RUN_DIR/api-server"
 mkdir -p "$API_WORK_DIR"
-(
-    cd "$API_WORK_DIR"
-    "$BUILD_DIR/sfv_api_server"
-) >"$RUN_DIR/api-server.log" 2>&1 &
+
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: TCP port 8080 is already in use; refusing to test against another process." >&2
+    exit 1
+fi
+
+cd "$API_WORK_DIR"
+"$BUILD_DIR/sfv_api_server" >"$RUN_DIR/api-server.log" 2>&1 &
 SERVER_PID="$!"
+cd "$ROOT"
 
 echo
 echo "========== WAIT FOR API SERVER =========="
