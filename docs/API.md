@@ -34,8 +34,14 @@ Error responses use this structure:
 
 The exact message depends on the endpoint and failure condition.
 
-The server sends CORS headers allowing requests from browser clients.
-This does not replace input validation or other security controls.
+The API binds to the loopback interface. Browser CORS access is granted only
+to the local frontend origin `http://127.0.0.1:8081` started by
+`scripts/run_smartfilevault.sh`. Other website origins do not receive
+`Access-Control-Allow-Origin`. This does not replace input validation or
+other security controls.
+
+Open the frontend through the launcher rather than a `file://` URL or a
+different web-server origin, so browser requests use the configured allowlist.
 
 ## 4. GET /api/dashboard
 
