@@ -203,6 +203,13 @@ if not isinstance(data.get("archives"), list) or data["archives"]:
 print("PASS: production GET /api/archives returns an empty archive catalogue")
 PY
 
+echo
+echo "========== PRODUCTION API LIFECYCLE REGRESSION =========="
+"$PYTHON" tests/production_api_lifecycle_test.py \
+    --base-url http://127.0.0.1:8080 \
+    --vault-root "$PRODUCTION_VAULT" \
+    --work-root "$RUN_DIR/production-lifecycle"
+
 kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
 wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
 PRODUCTION_SERVER_PID=""
