@@ -14,6 +14,12 @@ static void recordSkipped(FileScanResult& result,
         static_cast<int>(result.skippedDetails.size());
 }
 
+static bool isTemporaryOutputName(const fs::path& path)
+{
+    const std::string name = path.filename().string();
+    return name.rfind(".sfv-output-", 0) == 0;
+}
+
 bool scanDirectory(const std::string& directoryPath,
                    int inactiveDays,
                    FileScanResult& result)
@@ -58,6 +64,15 @@ bool scanDirectory(const std::string& directoryPath,
                 } else if (typeError) {
                     recordSkipped(result, itemPath.string(),
                                   typeError.message());
+                } else if (isTemporaryOutputName(itemPath)) {
+                    // Compression creates these in the destination directory.
+                    // Ignore them (and prune a matching staging directory) but
+                    // never remove or modify a scanner-discovered entry.
+                    std::error_code directoryError;
+                    if (iterator->is_directory(directoryError) &&
+                        !directoryError) {
+                        iterator.disable_recursion_pending();
+                    }
                 } else if (iterator->is_regular_file(typeError)) {
                     if (typeError) {
                         recordSkipped(result, itemPath.string(),

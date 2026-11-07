@@ -5,20 +5,43 @@
 #include "file_utils.h"
 
 #include <filesystem>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <sys/stat.h>
 #include <system_error>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
 #ifdef SFV_ENABLE_TEST_HOOK
 static void (*archiveServiceTestHook)(const std::string&) = nullptr;
+static bool (*archiveDeletionTestHook)(const std::string&) = nullptr;
 
 void setArchiveServiceTestHook(
     void (*hook)(const std::string& archivePath)
 )
 {
     archiveServiceTestHook = hook;
+}
+
+void setArchiveDeletionTestHook(
+    bool (*hook)(const std::string& step)
+)
+{
+    archiveDeletionTestHook = hook;
+}
+
+static bool shouldFailDeletionStep(const char* step)
+{
+    return archiveDeletionTestHook != nullptr &&
+           archiveDeletionTestHook(step);
+}
+#else
+static bool shouldFailDeletionStep(const char*)
+{
+    return false;
 }
 #endif
 
@@ -260,7 +283,13 @@ bool archiveAndRemoveOriginal(
     // otherwise the metadata would no longer describe the source we remove.
     struct stat currentSourceStatus {};
     if (!metadata.hasOriginalPermissions ||
-        ::stat(filePath.c_str(), &currentSourceStatus) != 0 ||
+        !metadata.hasOriginalFileIdentity ||
+        !matchesOriginalFileIdentity(
+            filePath,
+            metadata.originalFileIdentity
+        ) ||
+        ::lstat(filePath.c_str(), &currentSourceStatus) != 0 ||
+        !S_ISREG(currentSourceStatus.st_mode) ||
         static_cast<std::uint32_t>(currentSourceStatus.st_mode & 0777) !=
             metadata.originalPermissions) {
         std::cerr
@@ -308,5 +337,382 @@ bool archiveAndRemoveOriginal(
     );
 
     // Successful archive and metadata are retained.
+    return true;
+}
+
+
+namespace
+{
+    static bool syncDeletionDirectory(const fs::path& directory)
+    {
+#ifdef O_DIRECTORY
+        const int descriptor = ::open(
+            directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+        );
+#else
+        const int descriptor = ::open(directory.c_str(), O_RDONLY | O_NOFOLLOW);
+#endif
+        if (descriptor < 0) {
+            return false;
+        }
+
+        const bool synced = (::fsync(descriptor) == 0);
+        const int savedError = errno;
+        const bool closed = (::close(descriptor) == 0);
+        if (!synced) {
+            errno = savedError;
+        }
+        return synced && closed;
+    }
+
+    static bool isRealDirectory(const fs::path& path)
+    {
+        struct stat status {};
+        return ::lstat(path.c_str(), &status) == 0 &&
+               S_ISDIR(status.st_mode);
+    }
+
+    static bool inspectRegularFileNoFollow(
+        const fs::path& path,
+        bool& exists,
+        int& failure
+    )
+    {
+        struct stat status {};
+        if (::lstat(path.c_str(), &status) == 0) {
+            exists = true;
+            failure = 0;
+            return S_ISREG(status.st_mode);
+        }
+
+        failure = errno;
+        if (failure == ENOENT || failure == ENOTDIR) {
+            exists = false;
+            return true;
+        }
+
+        exists = false;
+        return false;
+    }
+
+    static bool isSafeOriginalPath(const fs::path& path)
+    {
+        if (!path.is_absolute() || path.filename().empty() ||
+            path.filename() == "." || path.filename() == "..") {
+            return false;
+        }
+        return path.lexically_normal() == path;
+    }
+
+    static bool pathIsWithin(const fs::path& parent, const fs::path& candidate)
+    {
+        const fs::path relative = candidate.lexically_normal().lexically_relative(
+            parent.lexically_normal()
+        );
+        if (relative.empty() || relative.is_absolute()) {
+            return relative.empty();
+        }
+        return *relative.begin() != "..";
+    }
+
+    static void setOriginalPreserved(
+        ArchiveDeletionResult& result,
+        const std::string& status
+    )
+    {
+        result.originalPreserved = true;
+        result.originalStatus = status;
+    }
+
+    static bool removeOriginalAfterIdentityRecheck(
+        const fs::path& originalPath,
+        const OriginalFileIdentity& expected,
+        ArchiveDeletionResult& result
+    )
+    {
+        // Recheck the final path immediately before unlinking. lstat-based
+        // identity matching refuses symlinks and replacement objects. POSIX
+        // does not provide a portable compare-and-unlink primitive, so this
+        // final check minimizes (but cannot mathematically eliminate) races
+        // with another process that can rename entries in the parent folder.
+        struct stat currentStatus {};
+        if (::lstat(originalPath.c_str(), &currentStatus) != 0) {
+            if (errno == ENOENT || errno == ENOTDIR) {
+                result.originalMissing = true;
+                result.originalStatus = "already_missing";
+                return true;
+            }
+            setOriginalPreserved(result, "preserved_unverifiable");
+            return true;
+        }
+
+        if (!S_ISREG(currentStatus.st_mode) ||
+            !matchesOriginalFileIdentity(originalPath.string(), expected)) {
+            setOriginalPreserved(
+                result,
+                S_ISLNK(currentStatus.st_mode)
+                    ? "preserved_symlink"
+                    : "preserved_identity_mismatch"
+            );
+            return true;
+        }
+
+        const bool injectedOriginalFailure =
+            shouldFailDeletionStep("original_unlink");
+        if (injectedOriginalFailure) {
+            errno = EACCES;
+        }
+        if (injectedOriginalFailure || ::unlink(originalPath.c_str()) != 0) {
+            result.originalStatus = "delete_failed";
+            result.originalPreserved = true;
+            result.partialFailure = true;
+            result.errorCode = "original_delete_failed";
+            result.message =
+                "The archive was removed, but the verified original file could not be deleted: " +
+                std::string(std::strerror(errno));
+            return false;
+        }
+
+        result.originalDeleted = true;
+        result.originalStatus = "deleted";
+
+        fs::path parent = originalPath.parent_path();
+        if (parent.empty()) {
+            parent = ".";
+        }
+        if (!syncDeletionDirectory(parent)) {
+            result.partialFailure = true;
+            result.errorCode = "original_directory_sync_failed";
+            result.message =
+                "The archive and original were deleted, but the original directory could not be synchronized.";
+            return false;
+        }
+
+        return true;
+    }
+}
+
+bool permanentlyDeleteArchive(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveDeletionResult& result
+)
+{
+    result = ArchiveDeletionResult{};
+
+    if (!isSafeArchiveId(archiveId)) {
+        result.errorCode = "invalid_archive_id";
+        result.message = "The archive ID is invalid.";
+        return false;
+    }
+
+    std::error_code pathError;
+    const fs::path root = fs::absolute(archiveRoot, pathError).lexically_normal();
+    if (pathError || root.empty()) {
+        result.errorCode = "invalid_archive_root";
+        result.message = "The vault location could not be resolved.";
+        return false;
+    }
+
+    const fs::path metadataDirectory = root / "metadata";
+    const fs::path compressedDirectory = root / "compressed";
+    if (!isRealDirectory(metadataDirectory) ||
+        !isRealDirectory(compressedDirectory)) {
+        result.errorCode = "vault_directories_unavailable";
+        result.message = "The vault metadata or compressed directory is missing or unsafe.";
+        return false;
+    }
+
+    const fs::path metadataPath = metadataDirectory / (archiveId + ".meta");
+    bool metadataExists = false;
+    int metadataFailure = 0;
+    const bool metadataIsRegular = inspectRegularFileNoFollow(
+        metadataPath, metadataExists, metadataFailure
+    );
+    if (!metadataIsRegular) {
+        result.errorCode = (metadataFailure == EACCES || metadataFailure == EPERM)
+            ? "metadata_access_denied"
+            : "unsafe_metadata_file";
+        result.message = "The archive metadata path is not a safely accessible regular file.";
+        return false;
+    }
+    if (!metadataExists) {
+        result.errorCode = "archive_not_found";
+        result.message = "No archive metadata exists for this archive ID.";
+        return false;
+    }
+
+    ArchiveMetadata metadata{};
+    if (!loadArchiveMetadata(metadataPath.string(), metadata) ||
+        metadata.archiveId != archiveId) {
+        result.errorCode = "invalid_metadata";
+        result.message = "The archive metadata is malformed or does not match the requested archive ID.";
+        return false;
+    }
+
+    // Reconstruct the compressed path from the trusted vault root and safe
+    // archive ID/name. Never delete the arbitrary path stored in metadata.
+    const fs::path originalName(metadata.originalName);
+    if (metadata.originalName.empty() ||
+        originalName.filename() != originalName ||
+        metadata.originalName == "." || metadata.originalName == ".." ||
+        metadata.originalName.find('\\') != std::string::npos) {
+        result.errorCode = "invalid_metadata_name";
+        result.message = "The original filename in metadata is unsafe.";
+        return false;
+    }
+
+    const fs::path expectedArchivePath =
+        fs::absolute(compressedDirectory /
+            (archiveId + "_" + metadata.originalName + ".gz"), pathError)
+            .lexically_normal();
+    if (pathError || !fs::path(metadata.archivePath).is_absolute() ||
+        fs::path(metadata.archivePath).lexically_normal() != expectedArchivePath) {
+        result.errorCode = "unsafe_archive_path";
+        result.message = "The recorded compressed path does not match this archive's expected vault location.";
+        return false;
+    }
+
+    // Determine whether the original path can be safely associated with this
+    // archive. Older metadata without FILEID is deliberately non-destructive.
+    bool originalEligibleForDeletion = false;
+    fs::path originalPath(metadata.originalPath);
+
+    if (!metadata.hasOriginalFileIdentity) {
+        setOriginalPreserved(result, "preserved_legacy_no_identity");
+    }
+    else if (!isSafeOriginalPath(originalPath) ||
+             pathIsWithin(root, originalPath) ||
+             originalPath.filename().string() != metadata.originalName) {
+        setOriginalPreserved(result, "preserved_unsafe_or_inconsistent_path");
+    }
+    else {
+        bool originalExists = false;
+        int originalFailure = 0;
+        const bool safeFileType = inspectRegularFileNoFollow(
+            originalPath, originalExists, originalFailure
+        );
+
+        if (!originalExists &&
+            (originalFailure == ENOENT || originalFailure == ENOTDIR)) {
+            result.originalMissing = true;
+            result.originalStatus = "already_missing";
+        }
+        else if (!safeFileType) {
+            if (originalFailure == EACCES || originalFailure == EPERM) {
+                setOriginalPreserved(result, "preserved_unverifiable");
+            }
+            else {
+                struct stat originalStatus {};
+                if (::lstat(originalPath.c_str(), &originalStatus) == 0 &&
+                    S_ISLNK(originalStatus.st_mode)) {
+                    setOriginalPreserved(result, "preserved_symlink");
+                }
+                else {
+                    setOriginalPreserved(result, "preserved_not_regular");
+                }
+            }
+        }
+        else if (!matchesOriginalFileIdentity(
+                     originalPath.string(), metadata.originalFileIdentity)) {
+            setOriginalPreserved(result, "preserved_identity_mismatch");
+        }
+        else {
+            originalEligibleForDeletion = true;
+            result.originalStatus = "identity_verified";
+        }
+    }
+
+    // Remove only the exact expected compressed artifact. A symlink or
+    // non-regular object at that path is treated as unsafe and left untouched.
+    bool compressedExists = false;
+    int compressedFailure = 0;
+    if (!inspectRegularFileNoFollow(
+            expectedArchivePath, compressedExists, compressedFailure)) {
+        result.errorCode = "unsafe_compressed_artifact";
+        result.message = "The compressed archive path is not a regular file; nothing was deleted.";
+        return false;
+    }
+    if (!compressedExists && originalEligibleForDeletion) {
+        // Do not delete the only remaining original when its compressed
+        // archive is already missing. Clean the stale metadata, but preserve
+        // the source file because the vault can no longer prove a backup exists.
+        originalEligibleForDeletion = false;
+        setOriginalPreserved(result, "preserved_archive_missing");
+    }
+    if (compressedExists) {
+        const bool injectedCompressedFailure =
+            shouldFailDeletionStep("compressed_unlink");
+        if (injectedCompressedFailure) {
+            errno = EACCES;
+        }
+        if (injectedCompressedFailure || ::unlink(expectedArchivePath.c_str()) != 0) {
+            result.errorCode = "compressed_delete_failed";
+            result.message = "Could not remove the compressed archive: " +
+                             std::string(std::strerror(errno));
+            return false;
+        }
+    }
+    result.compressedRemoved = true;
+
+    if (!syncDeletionDirectory(compressedDirectory)) {
+        result.partialFailure = true;
+        result.errorCode = "compressed_directory_sync_failed";
+        result.message = "The compressed archive was removed, but its directory could not be synchronized. Metadata and original were preserved.";
+        setOriginalPreserved(result, "preserved_archive_cleanup_incomplete");
+        return false;
+    }
+
+    // Metadata is removed only after the compressed artifact is confirmed
+    // absent and the compressed directory has been synchronized.
+    const bool injectedMetadataFailure =
+        shouldFailDeletionStep("metadata_unlink");
+    if (injectedMetadataFailure) {
+        errno = EACCES;
+    }
+    if (injectedMetadataFailure || ::unlink(metadataPath.c_str()) != 0) {
+        result.partialFailure = true;
+        result.errorCode = "metadata_delete_failed";
+        result.message = "The compressed archive was removed, but its metadata could not be removed: " +
+                         std::string(std::strerror(errno));
+        setOriginalPreserved(result, "preserved_archive_cleanup_incomplete");
+        return false;
+    }
+    result.metadataRemoved = true;
+
+    if (!syncDeletionDirectory(metadataDirectory)) {
+        result.archiveDeleted = true;
+        result.partialFailure = true;
+        result.errorCode = "metadata_directory_sync_failed";
+        result.message = "The archive and metadata were removed, but the metadata directory could not be synchronized. The original was preserved.";
+        setOriginalPreserved(result, "preserved_archive_cleanup_incomplete");
+        return false;
+    }
+
+    result.archiveDeleted = true;
+
+    if (originalEligibleForDeletion) {
+        if (!removeOriginalAfterIdentityRecheck(
+                originalPath, metadata.originalFileIdentity, result)) {
+            return false;
+        }
+    }
+
+    if (!result.originalStatus.empty() &&
+        result.originalStatus.rfind("preserved_", 0) == 0) {
+        result.originalPreserved = true;
+        result.message = "The archived data and metadata were deleted. The original-path file was preserved because its identity could not be proven to match this archive (" +
+                         result.originalStatus + ").";
+    }
+    else if (result.originalMissing) {
+        result.message = "The archived data and metadata were deleted. The original file was already missing.";
+    }
+    else if (result.originalDeleted) {
+        result.message = "The archive, metadata, and verified original file were permanently deleted.";
+    }
+    else {
+        result.message = "The archived data and metadata were permanently deleted.";
+    }
+
     return true;
 }
