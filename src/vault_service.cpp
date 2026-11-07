@@ -8,43 +8,14 @@
 
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <string>
 
 namespace fs = std::filesystem;
 
-// Accept only letters, digits, and hyphens in archive IDs.
-// This supports generated IDs such as SFV-123456789-1
-// and test IDs such as TEST-001, while rejecting path separators
-// and traversal components.
-static bool isSafeArchiveId(const std::string& archiveId)
-{
-    if (archiveId.empty()) {
-        return false;
-    }
-
-    for (unsigned char character : archiveId) {
-
-        const bool isUppercase =
-            character >= 'A' && character <= 'Z';
-
-        const bool isLowercase =
-            character >= 'a' && character <= 'z';
-
-        const bool isDigit =
-            character >= '0' && character <= '9';
-
-        if (!isUppercase &&
-            !isLowercase &&
-            !isDigit &&
-            character != '-') {
-
-            return false;
-        }
-    }
-
-    return true;
-}
-
+// Serialize vault lifecycle operations within this process so scanning/
+// archiving, restore, deletion, and summary reads cannot race one another.
+static std::mutex vaultOperationMutex;
 
 bool processCandidate(
     const std::string& filePath,
@@ -52,6 +23,7 @@ bool processCandidate(
     ArchiveMetadata& metadata
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     if (!fs::exists(filePath) ||
         !fs::is_regular_file(filePath)) {
 
@@ -79,6 +51,7 @@ bool processInactiveFiles(
     ProcessResult& result
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     result.totalFiles =
         static_cast<int>(files.size());
 
@@ -139,6 +112,7 @@ bool restoreFromArchive(
     std::string& restoredPath
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     // Reject invalid IDs before constructing any metadata path.
     if (!isSafeArchiveId(archiveId)) {
 
@@ -178,11 +152,30 @@ bool restoreFromArchive(
 }
 
 
+bool deleteArchiveFromVault(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveDeletionResult& result
+)
+{
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
+    if (!isSafeArchiveId(archiveId)) {
+        result = ArchiveDeletionResult{};
+        result.errorCode = "invalid_archive_id";
+        result.message = "The archive ID is invalid.";
+        return false;
+    }
+
+    return permanentlyDeleteArchive(archiveRoot, archiveId, result);
+}
+
+
 bool getVaultSummary(
     const std::string& archiveRoot,
     VaultSummary& summary
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     summary.archiveCount = 0;
     summary.originalSize = 0;
     summary.compressedSize = 0;

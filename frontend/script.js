@@ -89,6 +89,34 @@ const backend = {
         }
     },
 
+    async deleteArchive(archiveId) {
+        try {
+            const response = await fetch(
+                `${API_BASE_URL}/api/archives/${encodeURIComponent(archiveId)}`,
+                { method: "DELETE" }
+            );
+
+            const data = await response.json();
+            if (!response.ok || data.success !== true) {
+                showConnectionStatus(response.ok);
+                return {
+                    ...data,
+                    success: false,
+                    message: data.message || "Permanent archive deletion failed."
+                };
+            }
+
+            showConnectionStatus(true);
+            return data;
+        } catch (error) {
+            showConnectionStatus(false);
+            return {
+                success: false,
+                message: "Cannot connect to the C++ API. Check whether the server is running."
+            };
+        }
+    },
+
     async restore(archiveId, destination) {
         try {
             const response = await fetch(`${API_BASE_URL}/api/restore`, {
@@ -266,6 +294,14 @@ function getVisibleArchives(archives) {
         file => !restoredIds.has(file.archiveId)
     );
 }
+
+function forgetRestoredArchive(archiveId) {
+    if (!archiveId) return;
+
+    const ids = getRestoredArchiveIds();
+    ids.delete(archiveId);
+    localStorage.setItem(RESTORED_ARCHIVES_KEY, JSON.stringify([...ids]));
+}
 async function displayFiles() {
     const table = document.getElementById("fileTable");
     const statusMessage = document.getElementById("fileStatusMessage");
@@ -300,6 +336,7 @@ async function displayFiles() {
     }
 
     const files = archives.map(file => ({
+        archiveId: file.archiveId,
         name: file.originalName || "Unnamed file",
         path: file.originalPath || "Path unavailable",
         size: file.originalSizeText || "Size unavailable",
@@ -337,20 +374,24 @@ async function displayFiles() {
         });
 
         const actionCell = document.createElement("td");
-        const button = document.createElement("button");
+        const restoreButton = document.createElement("button");
 
-        button.type = "button";
-        button.textContent = "Restore";
-        button.addEventListener("click", () => {
-            const archive = archives.find(item =>
-                (item.originalName || "Unnamed file") === file.name &&
-                (item.originalPath || "Path unavailable") === file.path
-            );
-
-            if (archive) openRestoreModal(archive.archiveId);
+        restoreButton.type = "button";
+        restoreButton.textContent = "Restore";
+        restoreButton.addEventListener("click", () => {
+            if (file.archiveId) openRestoreModal(file.archiveId);
         });
 
-        actionCell.appendChild(button);
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.textContent = "Delete";
+        deleteButton.className = "action-button delete-button";
+        deleteButton.addEventListener("click", () => {
+            confirmDeleteArchive(file.archiveId);
+        });
+
+        actionCell.appendChild(restoreButton);
+        actionCell.appendChild(deleteButton);
         row.appendChild(actionCell);
         table.appendChild(row);
     });
@@ -407,11 +448,74 @@ async function displayRestoreFiles() {
             openRestoreModal(file.archiveId);
         });
 
+        const deleteButton = document.createElement("button");
+        deleteButton.textContent = "Delete";
+        deleteButton.type = "button";
+        deleteButton.className = "action-button delete-button";
+        deleteButton.addEventListener("click", () => {
+            confirmDeleteArchive(file.archiveId);
+        });
+
         item.appendChild(details);
         item.appendChild(button);
+        item.appendChild(deleteButton);
         list.appendChild(item);
     });
 }
+
+async function confirmDeleteArchive(archiveId) {
+    if (!archiveId) {
+        alert("No archive selected.");
+        return;
+    }
+
+    const archivesResponse = await backend.getArchives();
+    const archives = Array.isArray(archivesResponse?.archives)
+        ? archivesResponse.archives
+        : [];
+    const archive = archives.find(item => item.archiveId === archiveId);
+
+    if (!archive) {
+        alert("Archive not found. Refresh the archive list and try again.");
+        await displayFiles();
+        await displayRestoreFiles();
+        return;
+    }
+
+    const confirmationMessage =
+        "This will permanently delete the archived file and its original file (if it exists). This action cannot be undone.";
+
+    if (!window.confirm(confirmationMessage)) {
+        return;
+    }
+
+    const result = await backend.deleteArchive(archiveId);
+
+    // Even a partial failure can have removed the archive artifacts. Refresh
+    // the UI whenever the backend confirms the catalogue entry is gone.
+    if (result.archiveDeleted) {
+        forgetRestoredArchive(archiveId);
+        await updateDashboard();
+        await displayFiles();
+        await displayRestoreFiles();
+    }
+
+    if (!result.success) {
+        let message = result.message || "Permanent archive deletion failed.";
+        if (result.partialFailure) {
+            message += "\nSome deletion steps completed. Check the reported status before retrying.";
+        }
+        alert(message);
+        return;
+    }
+
+    let message = result.message || "Archive deleted successfully.";
+    if (!result.reportUpdated) {
+        message += "\nThe vault report could not be refreshed immediately. It will be regenerated when the dashboard or archive list is loaded.";
+    }
+    alert(message);
+}
+
 
 async function openRestoreModal(archiveId) {
     const file = archiveData.find(

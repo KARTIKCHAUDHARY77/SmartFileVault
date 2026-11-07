@@ -144,6 +144,203 @@ static bool isValidSha256Hex(const std::string& digest)
     return true;
 }
 
+static bool isSignedDecimal(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+
+    std::size_t index = value[0] == '-' ? 1U : 0U;
+    if (index == value.size()) {
+        return false;
+    }
+
+    for (; index < value.size(); ++index) {
+        const unsigned char character =
+            static_cast<unsigned char>(value[index]);
+        if (character < '0' || character > '9') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool parseSignedDecimal(const std::string& text, long long& value)
+{
+    if (!isSignedDecimal(text)) {
+        return false;
+    }
+
+    try {
+        std::size_t consumed = 0;
+        const long long parsed = std::stoll(text, &consumed, 10);
+        if (consumed != text.size()) {
+            return false;
+        }
+        value = parsed;
+        return true;
+    }
+    catch (...) {
+        return false;
+    }
+}
+
+static bool parseFileIdentityRecord(
+    const std::string& line,
+    OriginalFileIdentity& identity
+)
+{
+    const std::string prefix = "FILEID:v1:";
+    if (line.compare(0, prefix.size(), prefix) != 0) {
+        return false;
+    }
+
+    std::vector<std::string> fields;
+    const std::string payload = line.substr(prefix.size());
+    std::size_t start = 0;
+
+    while (true) {
+        const std::size_t separator = payload.find(':', start);
+        if (separator == std::string::npos) {
+            fields.push_back(payload.substr(start));
+            break;
+        }
+        fields.push_back(payload.substr(start, separator - start));
+        start = separator + 1;
+    }
+
+    if (fields.size() != 9) {
+        return false;
+    }
+
+    OriginalFileIdentity parsed;
+    std::uintmax_t modifiedNs = 0;
+    std::uintmax_t changedNs = 0;
+    std::uintmax_t birthNs = 0;
+
+    if (!parseUnsignedDecimal(fields[0], parsed.device) ||
+        !parseUnsignedDecimal(fields[1], parsed.inode) ||
+        !parseUnsignedDecimal(fields[2], parsed.size) ||
+        !parseSignedDecimal(fields[3], parsed.modifiedSeconds) ||
+        !parseUnsignedDecimal(fields[4], modifiedNs) ||
+        !parseSignedDecimal(fields[5], parsed.changedSeconds) ||
+        !parseUnsignedDecimal(fields[6], changedNs) ||
+        !parseSignedDecimal(fields[7], parsed.birthSeconds) ||
+        !parseUnsignedDecimal(fields[8], birthNs) ||
+        parsed.inode == 0 ||
+        modifiedNs >= 1000000000ULL ||
+        changedNs >= 1000000000ULL ||
+        birthNs >= 1000000000ULL) {
+        return false;
+    }
+
+    parsed.modifiedNanoseconds = static_cast<long long>(modifiedNs);
+    parsed.changedNanoseconds = static_cast<long long>(changedNs);
+    parsed.birthNanoseconds = static_cast<long long>(birthNs);
+    identity = parsed;
+    return true;
+}
+
+static bool sameIdentity(
+    const OriginalFileIdentity& first,
+    const OriginalFileIdentity& second
+)
+{
+    return first.device == second.device &&
+           first.inode == second.inode &&
+           first.size == second.size &&
+           first.modifiedSeconds == second.modifiedSeconds &&
+           first.modifiedNanoseconds == second.modifiedNanoseconds &&
+           first.changedSeconds == second.changedSeconds &&
+           first.changedNanoseconds == second.changedNanoseconds &&
+           first.birthSeconds == second.birthSeconds &&
+           first.birthNanoseconds == second.birthNanoseconds;
+}
+
+bool isSafeArchiveId(const std::string& archiveId)
+{
+    if (archiveId.empty()) {
+        return false;
+    }
+
+    bool containsAlphaNumeric = false;
+    for (unsigned char character : archiveId) {
+        const bool isUppercase = character >= 'A' && character <= 'Z';
+        const bool isLowercase = character >= 'a' && character <= 'z';
+        const bool isDigit = character >= '0' && character <= '9';
+
+        if (!isUppercase && !isLowercase && !isDigit && character != '-') {
+            return false;
+        }
+        containsAlphaNumeric = containsAlphaNumeric ||
+                               isUppercase || isLowercase || isDigit;
+    }
+
+    return containsAlphaNumeric;
+}
+
+static bool identityFromStat(
+    const struct stat& status,
+    OriginalFileIdentity& identity
+)
+{
+    if (!S_ISREG(status.st_mode) || status.st_size < 0) {
+        return false;
+    }
+
+    identity.device = static_cast<std::uintmax_t>(status.st_dev);
+    identity.inode = static_cast<std::uintmax_t>(status.st_ino);
+    identity.size = static_cast<std::uintmax_t>(status.st_size);
+
+#if defined(__APPLE__)
+    identity.modifiedSeconds = static_cast<long long>(status.st_mtimespec.tv_sec);
+    identity.modifiedNanoseconds = static_cast<long long>(status.st_mtimespec.tv_nsec);
+    identity.changedSeconds = static_cast<long long>(status.st_ctimespec.tv_sec);
+    identity.changedNanoseconds = static_cast<long long>(status.st_ctimespec.tv_nsec);
+    identity.birthSeconds = static_cast<long long>(status.st_birthtimespec.tv_sec);
+    identity.birthNanoseconds = static_cast<long long>(status.st_birthtimespec.tv_nsec);
+#else
+    identity.modifiedSeconds = static_cast<long long>(status.st_mtim.tv_sec);
+    identity.modifiedNanoseconds = static_cast<long long>(status.st_mtim.tv_nsec);
+    identity.changedSeconds = static_cast<long long>(status.st_ctim.tv_sec);
+    identity.changedNanoseconds = static_cast<long long>(status.st_ctim.tv_nsec);
+    identity.birthSeconds = 0;
+    identity.birthNanoseconds = 0;
+#endif
+
+    return identity.inode != 0 &&
+           identity.modifiedNanoseconds >= 0 &&
+           identity.modifiedNanoseconds < 1000000000LL &&
+           identity.changedNanoseconds >= 0 &&
+           identity.changedNanoseconds < 1000000000LL &&
+           identity.birthNanoseconds >= 0 &&
+           identity.birthNanoseconds < 1000000000LL;
+}
+
+bool captureOriginalFileIdentity(
+    const std::string& filePath,
+    OriginalFileIdentity& identity
+)
+{
+    struct stat status {};
+    if (::lstat(filePath.c_str(), &status) != 0) {
+        return false;
+    }
+
+    return identityFromStat(status, identity);
+}
+
+bool matchesOriginalFileIdentity(
+    const std::string& filePath,
+    const OriginalFileIdentity& expected
+)
+{
+    OriginalFileIdentity current;
+    return captureOriginalFileIdentity(filePath, current) &&
+           sameIdentity(current, expected);
+}
+
 static std::string makeArchiveId()
 {
     auto now =
@@ -189,6 +386,19 @@ bool saveArchiveMetadata(
         return false;
     }
 
+    if (metadata.hasOriginalFileIdentity &&
+        (metadata.originalFileIdentity.inode == 0 ||
+         metadata.originalFileIdentity.size != metadata.originalSize ||
+         metadata.originalFileIdentity.modifiedNanoseconds < 0 ||
+         metadata.originalFileIdentity.modifiedNanoseconds >= 1000000000LL ||
+         metadata.originalFileIdentity.changedNanoseconds < 0 ||
+         metadata.originalFileIdentity.changedNanoseconds >= 1000000000LL ||
+         metadata.originalFileIdentity.birthNanoseconds < 0 ||
+         metadata.originalFileIdentity.birthNanoseconds >= 1000000000LL)) {
+        std::cerr << "Metadata error: invalid original file identity.\n";
+        return false;
+    }
+
     std::ofstream file(metadataPath);
 
     if (!file) {
@@ -214,6 +424,20 @@ bool saveArchiveMetadata(
     // the permissions field is absent.
     if (metadata.hasOriginalSha256) {
         file << "SHA256:" << metadata.originalSha256 << '\n';
+    }
+
+    if (metadata.hasOriginalFileIdentity) {
+        const OriginalFileIdentity& identity = metadata.originalFileIdentity;
+        file << "FILEID:v1:"
+             << identity.device << ':'
+             << identity.inode << ':'
+             << identity.size << ':'
+             << identity.modifiedSeconds << ':'
+             << identity.modifiedNanoseconds << ':'
+             << identity.changedSeconds << ':'
+             << identity.changedNanoseconds << ':'
+             << identity.birthSeconds << ':'
+             << identity.birthNanoseconds << '\n';
     }
 
     file.flush();
@@ -272,6 +496,8 @@ bool loadArchiveMetadata(
     metadata.hasOriginalPermissions = false;
     metadata.originalSha256.clear();
     metadata.hasOriginalSha256 = false;
+    metadata.originalFileIdentity = OriginalFileIdentity{};
+    metadata.hasOriginalFileIdentity = false;
 
     if (!std::getline(file, metadata.archiveId)) {
         std::cerr << "Metadata error: archiveId missing.\n";
@@ -356,14 +582,15 @@ bool loadArchiveMetadata(
     stripCarriageReturn(percentageText);
     stripCarriageReturn(archivedAtText);
 
-    // Read at most two optional trailing lines: permissions and SHA-256.
-    // Eight-line legacy metadata therefore remains valid.
+    // Read at most three optional trailing lines: permissions, SHA-256,
+    // and the versioned filesystem identity. Eight-line legacy metadata
+    // and the two existing optional records remain valid.
     std::string optionalLine;
     while (std::getline(file, optionalLine)) {
         stripCarriageReturn(optionalLine);
         optionalLines.push_back(optionalLine);
 
-        if (optionalLines.size() > 2) {
+        if (optionalLines.size() > 3) {
             std::cerr << "Metadata error: unexpected trailing metadata lines.\n";
             return false;
         }
@@ -396,37 +623,45 @@ bool loadArchiveMetadata(
 
     std::string originalPermissionsText;
     std::string digestText;
+    std::string identityText;
     bool hasOriginalPermissionsLine = false;
     bool hasDigestLine = false;
+    bool hasIdentityLine = false;
 
     const std::string digestPrefix = "SHA256:";
+    const std::string identityPrefix = "FILEID:";
+    int optionalPhase = 0;
 
-    if (optionalLines.size() == 1) {
-        if (optionalLines[0].compare(
-                0, digestPrefix.size(), digestPrefix
-            ) == 0) {
-            digestText = optionalLines[0].substr(digestPrefix.size());
+    for (const std::string& line : optionalLines) {
+        if (line.compare(0, digestPrefix.size(), digestPrefix) == 0) {
+            if (optionalPhase > 1 || hasDigestLine) {
+                std::cerr << "Metadata error: misplaced SHA-256 record.\n";
+                return false;
+            }
+            digestText = line.substr(digestPrefix.size());
             hasDigestLine = true;
-        } else {
-            originalPermissionsText = optionalLines[0];
+            optionalPhase = 2;
+        }
+        else if (line.compare(0, identityPrefix.size(), identityPrefix) == 0) {
+            if (optionalPhase > 2 || hasIdentityLine) {
+                std::cerr << "Metadata error: misplaced file identity record.\n";
+                return false;
+            }
+            identityText = line;
+            hasIdentityLine = true;
+            optionalPhase = 3;
+        }
+        else {
+            // A plain optional line is the legacy permissions value and must
+            // precede all tagged metadata records.
+            if (optionalPhase != 0 || hasOriginalPermissionsLine) {
+                std::cerr << "Metadata error: invalid optional metadata order.\n";
+                return false;
+            }
+            originalPermissionsText = line;
             hasOriginalPermissionsLine = true;
+            optionalPhase = 1;
         }
-    }
-    else if (optionalLines.size() == 2) {
-        // With two trailing lines, the only supported order is permissions
-        // followed by the SHA-256 record.
-        originalPermissionsText = optionalLines[0];
-        hasOriginalPermissionsLine = true;
-
-        if (optionalLines[1].compare(
-                0, digestPrefix.size(), digestPrefix
-            ) != 0) {
-            std::cerr << "Metadata error: invalid SHA-256 metadata record.\n";
-            return false;
-        }
-
-        digestText = optionalLines[1].substr(digestPrefix.size());
-        hasDigestLine = true;
     }
 
     if (hasDigestLine && !isValidSha256Hex(digestText)) {
@@ -496,6 +731,14 @@ bool loadArchiveMetadata(
             }
         }
 
+        OriginalFileIdentity parsedIdentity;
+        if (hasIdentityLine &&
+            (!parseFileIdentityRecord(identityText, parsedIdentity) ||
+             parsedIdentity.size != parsedOriginalSize)) {
+            std::cerr << "Metadata error: invalid original file identity record.\n";
+            return false;
+        }
+
         // Assign fields only after all supported metadata values validate.
         metadata.originalSize = parsedOriginalSize;
         metadata.compressedSize = parsedCompressedSize;
@@ -511,6 +754,11 @@ bool loadArchiveMetadata(
         if (hasDigestLine) {
             metadata.originalSha256 = digestText;
             metadata.hasOriginalSha256 = true;
+        }
+
+        if (hasIdentityLine) {
+            metadata.originalFileIdentity = parsedIdentity;
+            metadata.hasOriginalFileIdentity = true;
         }
     }
     catch (const std::exception& error) {
@@ -530,20 +778,18 @@ bool createArchive(
     ArchiveMetadata& metadata
 )
 {
-    if (!fs::exists(inputPath) ||
-        !fs::is_regular_file(inputPath)) {
+    metadata = ArchiveMetadata{};
 
+    OriginalFileIdentity originalIdentity;
+    if (!captureOriginalFileIdentity(inputPath, originalIdentity)) {
+        std::cerr << "Archive error: source must be a non-symlink regular file with readable identity.\n";
         return false;
     }
 
-    metadata.originalPermissions = 0600;
-    metadata.hasOriginalPermissions = false;
-    metadata.originalSha256.clear();
-    metadata.hasOriginalSha256 = false;
-
     struct stat inputStatus {};
-    if (::stat(inputPath.c_str(), &inputStatus) != 0) {
-        std::cerr << "Archive error: could not read original permissions.\n";
+    if (::lstat(inputPath.c_str(), &inputStatus) != 0 ||
+        !S_ISREG(inputStatus.st_mode)) {
+        std::cerr << "Archive error: could not safely read original permissions.\n";
         return false;
     }
 
@@ -630,6 +876,15 @@ bool createArchive(
         return false;
     }
 
+    OriginalFileIdentity identityAfterCompression;
+    if (!captureOriginalFileIdentity(inputPath, identityAfterCompression) ||
+        !sameIdentity(originalIdentity, identityAfterCompression)) {
+        std::cerr << "Archive error: original file identity changed during compression.\n";
+        error.clear();
+        fs::remove(compressedPath, error);
+        return false;
+    }
+
     if (!compressionProvidesBenefit(
             inputPath,
             compressedPath
@@ -643,8 +898,7 @@ bool createArchive(
         return false;
     }
 
-    std::uintmax_t originalSize =
-        fs::file_size(inputPath);
+    std::uintmax_t originalSize = originalIdentity.size;
 
     std::uintmax_t compressedSize =
         fs::file_size(compressedPath);
@@ -673,7 +927,7 @@ bool createArchive(
         originalName;
 
     metadata.originalPath =
-        fs::absolute(inputPath).string();
+        fs::absolute(inputPath).lexically_normal().string();
 
     metadata.archivePath =
         fs::absolute(compressedPath).string();
@@ -689,6 +943,8 @@ bool createArchive(
 
     metadata.originalSha256 = originalSha256;
     metadata.hasOriginalSha256 = true;
+    metadata.originalFileIdentity = originalIdentity;
+    metadata.hasOriginalFileIdentity = true;
 
     auto now =
         std::chrono::system_clock::now();
@@ -802,6 +1058,10 @@ bool findArchiveById(
     ArchiveMetadata& metadata
 )
 {
+    if (!isSafeArchiveId(archiveId)) {
+        return false;
+    }
+
     std::string metadataPath =
         archiveRoot +
         "/metadata/" +
