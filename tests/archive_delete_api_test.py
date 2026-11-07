@@ -60,7 +60,7 @@ def main():
                 base + f"/api/archives/{archive_id}",
                 method="OPTIONS",
                 headers={
-                    "Origin": "http://localhost",
+                    "Origin": "http://127.0.0.1:8081",
                     "Access-Control-Request-Method": "DELETE",
                 },
             )
