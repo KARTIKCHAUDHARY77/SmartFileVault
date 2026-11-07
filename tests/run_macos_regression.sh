@@ -113,6 +113,82 @@ build_test sfv_api_server \
     src/vault_report.cpp
 "$BUILD_DIR/sfv_api_server" --help
 
+# Exercise the production entry point against a disposable persistent vault.
+# This is separate from the API test harness built below.
+PRODUCTION_VAULT="$RUN_DIR/production-api-vault"
+PRODUCTION_API_LOG="$RUN_DIR/production-api.log"
+"$BUILD_DIR/sfv_api_server" --vault-root "$PRODUCTION_VAULT" \
+    >"$PRODUCTION_API_LOG" 2>&1 &
+PRODUCTION_SERVER_PID="$!"
+
+production_ready=0
+for attempt in $(seq 1 100); do
+    if ! kill -0 "$PRODUCTION_SERVER_PID" >/dev/null 2>&1; then
+        echo "ERROR: production API server exited during startup." >&2
+        cat "$PRODUCTION_API_LOG" >&2
+        exit 1
+    fi
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:8080/api/dashboard \
+        -o "$RUN_DIR/production-dashboard.json"; then
+        production_ready=1
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$production_ready" -ne 1 ]]; then
+    echo "ERROR: production API did not become ready." >&2
+    cat "$PRODUCTION_API_LOG" >&2
+    kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/production-dashboard.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+required = {
+    "archiveCount", "originalSize", "compressedSize", "spaceSaved",
+    "restoreSafetySpace", "freeSpace", "archives",
+}
+missing = required - data.keys()
+if missing:
+    raise SystemExit(f"Production dashboard is missing fields: {sorted(missing)}")
+if data["archiveCount"] != 0 or data["archives"] != []:
+    raise SystemExit("Fresh production vault should begin empty")
+print("PASS: production entry point starts with a fresh persistent vault")
+print("PASS: production dashboard returns a valid empty-vault JSON summary")
+PY
+
+if ! curl --silent --show-error --fail \
+    http://127.0.0.1:8080/api/archives \
+    -o "$RUN_DIR/production-archives.json"; then
+    echo "ERROR: production GET /api/archives failed." >&2
+    kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/production-archives.json" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(data.get("archives"), list) or data["archives"]:
+    raise SystemExit("Fresh production archive list should be an empty array")
+print("PASS: production GET /api/archives returns an empty archive catalogue")
+PY
+
+kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+PRODUCTION_SERVER_PID=""
+
 # The vault report must remain valid JSON even when a legal filename contains
 # tabs or quotes (both are legal characters on macOS/POSIX filesystems).
 build_test vault_report_json_test \
