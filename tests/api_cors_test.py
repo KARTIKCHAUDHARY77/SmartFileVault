@@ -65,7 +65,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="sfv-cors-side-effect-") as temporary:
         fixture = pathlib.Path(temporary) / "should-not-be-archived.txt"
-        fixture.write_text("Untrusted cross-origin scan must not touch this file.\\n", encoding="utf-8")
+        fixture.write_text("SmartFileVault cross-origin scan side-effect sentinel.\\n" * 5000, encoding="utf-8")
         old_time = time.time() - (3 * 24 * 60 * 60)
         os.utime(fixture, (old_time, old_time))
 
