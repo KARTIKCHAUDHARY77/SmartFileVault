@@ -49,7 +49,7 @@ def main() -> int:
     print("PASS: local frontend origin can read dashboard JSON")
 
     status, headers, _ = request("OPTIONS", "/api/archives/example", UNTRUSTED_ORIGIN)
-    assert status == 200, f"untrusted preflight HTTP status was {status}"
+    assert status == 403, f"untrusted preflight returned HTTP {status}, expected 403"
     assert header(headers, "Access-Control-Allow-Origin") is None
     print("PASS: untrusted website receives no CORS permission")
 
