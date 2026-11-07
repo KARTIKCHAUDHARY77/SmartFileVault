@@ -95,36 +95,36 @@ build_test compression_sha256_test \
 run_test compression_sha256_test
 
 # Compile the real web-app API entry point (not the disposable test harness).
-build_test sfv_api_server \\
-    src/api_server_main.cpp \\
-    src/api_server.cpp \\
-    src/application_service.cpp \\
-    src/file_manager.cpp \\
-    src/inactivity.cpp \\
-    src/scan_report.cpp \\
-    src/vault_service.cpp \\
-    src/archive_service.cpp \\
-    src/archive.cpp \\
-    src/compression.cpp \\
-    src/compression_policy.cpp \\
-    src/file_utils.cpp \\
-    src/restore.cpp \\
-    src/restore_safety.cpp \\
+build_test sfv_api_server \
+    src/api_server_main.cpp \
+    src/api_server.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
     src/vault_report.cpp
 "$BUILD_DIR/sfv_api_server" --help
 
 # The vault report must remain valid JSON even when a legal filename contains
 # tabs or quotes (both are legal characters on macOS/POSIX filesystems).
-build_test vault_report_json_test \\
-    src/vault_report_json_test.cpp \\
-    src/vault_report.cpp \\
-    src/vault_service.cpp \\
-    src/archive_service.cpp \\
-    src/archive.cpp \\
-    src/compression.cpp \\
-    src/compression_policy.cpp \\
-    src/file_utils.cpp \\
-    src/restore.cpp \\
+build_test vault_report_json_test \
+    src/vault_report_json_test.cpp \
+    src/vault_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
     src/restore_safety.cpp
 "$PYTHON" tests/vault_report_json_test.py --binary "$BUILD_DIR/vault_report_json_test"
 
