@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
 
     std::cout << "Vault directory: " << vaultRoot.string() << '\n';
     std::cout << "Frontend: http://127.0.0.1:8081/\n";
-    std::cout << "API:      http://localhost:8080/\n";
+    std::cout << "API:      http://127.0.0.1:8080/\n";
     std::cout << "Press Ctrl+C to stop SmartFileVault.\n\n";
 
     return startApiServer(vaultRoot.string(), 8080) ? 0 : 1;
