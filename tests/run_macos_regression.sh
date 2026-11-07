@@ -49,6 +49,7 @@ LINK_FLAGS=(
     "-L$OPENSSL_PREFIX/lib"
     -lcrypto
     -lz
+    -pthread
 )
 
 build_test() {
@@ -92,6 +93,43 @@ build_test compression_sha256_test \
     src/compression_sha256_test.cpp \
     src/compression.cpp
 run_test compression_sha256_test
+
+# Compile the real web-app API entry point (not the disposable test harness).
+build_test sfv_api_server \\
+    src/api_server_main.cpp \\
+    src/api_server.cpp \\
+    src/application_service.cpp \\
+    src/file_manager.cpp \\
+    src/inactivity.cpp \\
+    src/scan_report.cpp \\
+    src/vault_service.cpp \\
+    src/archive_service.cpp \\
+    src/archive.cpp \\
+    src/compression.cpp \\
+    src/compression_policy.cpp \\
+    src/file_utils.cpp \\
+    src/restore.cpp \\
+    src/restore_safety.cpp \\
+    src/vault_report.cpp
+"$BUILD_DIR/sfv_api_server" --help
+
+# The vault report must remain valid JSON even when a legal filename contains
+# tabs or quotes (both are legal characters on macOS/POSIX filesystems).
+build_test vault_report_json_test \\
+    src/vault_report_json_test.cpp \\
+    src/vault_report.cpp \\
+    src/vault_service.cpp \\
+    src/archive_service.cpp \\
+    src/archive.cpp \\
+    src/compression.cpp \\
+    src/compression_policy.cpp \\
+    src/file_utils.cpp \\
+    src/restore.cpp \\
+    src/restore_safety.cpp
+"$PYTHON" tests/vault_report_json_test.py --binary "$BUILD_DIR/vault_report_json_test"
+
+# Validate the local-origin CORS policy and preflight support.
+bash -n scripts/run_smartfilevault.sh
 
 # Build the real API server with the production application/service sources.
 echo
@@ -162,6 +200,10 @@ echo "========== API HTTP SMOKE TESTS =========="
 echo
 echo "========== API REQUEST PARSER TESTS =========="
 "$PYTHON" tests/api_request_parser_test.py
+
+echo
+echo "========== API CORS ALLOWLIST TESTS =========="
+"$PYTHON" tests/api_cors_test.py
 
 echo
 echo "========== FRONTEND JAVASCRIPT SYNTAX =========="
