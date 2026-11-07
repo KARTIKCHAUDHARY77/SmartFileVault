@@ -296,4 +296,8 @@ else
 fi
 
 echo
+echo "========== FRONTEND STATE REGRESSION =========="
+node tests/frontend_state_test.js
+
+echo
 echo "========== MACOS REGRESSION SMOKE SUITE PASSED =========="
