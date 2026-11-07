@@ -281,6 +281,7 @@ function getStatusText(status) {
         active: "Active",
         inactive: "Inactive",
         archived: "Archived",
+        restored: "Restored (archive retained)",
         skipped: "Skipped"
     };
 
@@ -313,11 +314,10 @@ function markArchiveRestored(archiveId) {
 }
 
 function getVisibleArchives(archives) {
-    const restoredIds = getRestoredArchiveIds();
-
-    return archives.filter(
-        file => !restoredIds.has(file.archiveId)
-    );
+    // Restoring an archive does not remove the compressed archive from the
+    // backend vault. Keep it visible so storage totals and delete actions
+    // continue to reflect the actual vault contents.
+    return archives;
 }
 
 function forgetRestoredArchive(archiveId) {
@@ -365,7 +365,9 @@ async function displayFiles() {
         name: file.originalName || "Unnamed file",
         path: file.originalPath || "Path unavailable",
         size: file.originalSizeText || "Size unavailable",
-        status: "archived",
+        status: getRestoredArchiveIds().has(file.archiveId)
+            ? "restored"
+            : "archived",
         activity: file.archivedAt
             ? new Date(file.archivedAt * 1000).toLocaleDateString()
             : "Archived"
@@ -373,7 +375,10 @@ async function displayFiles() {
 
     const visibleFiles = filter === "all"
         ? files
-        : files.filter(file => file.status === filter);
+        : files.filter(file =>
+            filter === "archived" &&
+            (file.status === "archived" || file.status === "restored")
+        );
 
     if (visibleFiles.length === 0) {
         const row = document.createElement("tr");
@@ -402,7 +407,9 @@ async function displayFiles() {
         const restoreButton = document.createElement("button");
 
         restoreButton.type = "button";
-        restoreButton.textContent = "Restore";
+        restoreButton.textContent = file.status === "restored"
+            ? "Restore Again"
+            : "Restore";
         restoreButton.addEventListener("click", () => {
             if (file.archiveId) openRestoreModal(file.archiveId);
         });
@@ -467,7 +474,9 @@ async function displayRestoreFiles() {
         details.appendChild(path);
 
         const button = document.createElement("button");
-        button.textContent = "Restore";
+        button.textContent = getRestoredArchiveIds().has(file.archiveId)
+            ? "Restore Again"
+            : "Restore";
         button.type = "button";
         button.addEventListener("click", () => {
             openRestoreModal(file.archiveId);
