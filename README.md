@@ -77,6 +77,23 @@ Requirements: Clang with C++17 support, Python 3, zlib, and OpenSSL 3
 (`brew install zlib openssl@3`). The commands below assume OpenSSL at
 `/opt/homebrew/opt/openssl@3` (Apple Silicon Homebrew).
 
+### Run the automated macOS regression smoke suite
+
+From the repository root:
+
+```bash
+brew install openssl@3
+bash tests/run_macos_regression.sh
+```
+
+This script builds and runs the core compression round-trip, compression-policy,
+bounded-decompression, and SHA-256 tests. It then builds the C++ API server in
+a disposable directory and runs the non-destructive HTTP smoke tests, request
+parser tests, and frontend JavaScript syntax check. The same script is run by
+the `.github/workflows/macos-regression.yml` workflow for pull requests and
+pushes targeting `main`. This is a targeted regression smoke suite, not a
+claim that every standalone test in `src/` is included.
+
 ### Build the API test server
 
 Run from the repository root:
