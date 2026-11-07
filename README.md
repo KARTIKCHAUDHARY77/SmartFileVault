@@ -94,6 +94,39 @@ the `.github/workflows/macos-regression.yml` workflow for pull requests and
 pushes targeting `main`. This is a targeted regression smoke suite, not a
 claim that every standalone test in `src/` is included.
 
+### Run the complete web application (macOS)
+
+From the repository root:
+
+```bash
+brew install openssl@3
+bash scripts/run_smartfilevault.sh
+```
+
+The launcher builds the production API server, starts the frontend and API on
+loopback-only ports, and opens the frontend in your default browser. Keep the
+terminal open while using the application; press `Ctrl+C` there to stop both
+servers.
+
+- Frontend: `http://127.0.0.1:8081/`
+- API: `http://localhost:8080/`
+- Default vault: `~/Library/Application Support/SmartFileVault/Vault`
+
+To choose a different persistent vault location:
+
+```bash
+SFV_VAULT_ROOT="$HOME/Documents/SmartFileVault-Vault" bash scripts/run_smartfilevault.sh
+```
+
+The browser API only grants CORS access to the local frontend origin started
+by this launcher. Do not open `frontend/index.html` directly as a `file://`
+URL or serve it from another origin; use the launcher.
+
+**Important:** scanning is a filesystem-changing operation. Eligible inactive
+files may be archived and their originals removed after verification. For the
+first run, choose a disposable test folder and verify scan, restore, and delete
+behaviour before selecting personal folders.
+
 ### Build the API test server
 
 Run from the repository root:
@@ -137,7 +170,7 @@ Keep the server running while testing. Press `Ctrl+C` in that terminal to stop i
 In another terminal:
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 python3 tests/api_smoke_test.py \
   --base-url http://127.0.0.1:8080
