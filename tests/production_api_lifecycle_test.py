@@ -57,10 +57,7 @@ def main() -> None:
     vault_root = pathlib.Path(args.vault_root).resolve()
     work_root = pathlib.Path(args.work_root).resolve()
     source_root = work_root / "source"
-    restore_root = work_root / "restored"
-
     source_root.mkdir(parents=True, exist_ok=True)
-    restore_root.mkdir(parents=True, exist_ok=True)
     check(vault_root.is_dir(), "production vault directory exists")
 
     eligible = source_root / "eligible.txt"
@@ -112,13 +109,21 @@ def main() -> None:
         base_url,
         "/api/restore",
         method="POST",
-        payload={"archiveId": archive_id, "destination": str(restore_root)},
+        payload={"archiveId": archive_id, "destination": str(source_root)},
     )
     restored_path = pathlib.Path(restored.get("restoredPath", ""))
     check(status == 200 and restored.get("success") is True,
           "production restore endpoint succeeds")
-    check(restored_path.is_file() and restored_path.read_bytes() == expected,
-          "restored output is byte-for-byte identical to the original input")
+    check(restored_path == eligible and restored_path.is_file() and
+          restored_path.read_bytes() == expected,
+          "restored output is byte-for-byte identical at the original location")
+
+    user_edit = b"\\nUser edit made after restoration.\\n"
+    with restored_path.open("ab") as restored_file:
+        restored_file.write(user_edit)
+    expected_after_user_edit = expected + user_edit
+    check(restored_path.read_bytes() == expected_after_user_edit,
+          "restored fixture accepts a user edit before archive deletion")
 
     status, deleted = request_json(
         base_url,
@@ -131,15 +136,18 @@ def main() -> None:
           deleted.get("compressedRemoved") is True and
           deleted.get("metadataRemoved") is True,
           "production DELETE removes compressed archive and metadata")
-    check(deleted.get("originalMissing") is True and
-          deleted.get("originalDeleted") is False,
-          "production DELETE reports the already-removed source accurately")
+    check(deleted.get("originalPreserved") is True and
+          deleted.get("originalDeleted") is False and
+          deleted.get("originalMissing") is False and
+          deleted.get("originalStatus") == "preserved_identity_mismatch",
+          "production DELETE preserves a restored and subsequently modified original-path file")
     check(deleted.get("reportUpdated") is True,
           "production DELETE regenerates the vault report")
     check(not compressed_path.exists() and not metadata_path.exists(),
           "production vault no longer contains the deleted archive artifacts")
-    check(restored_path.is_file() and restored_path.read_bytes() == expected,
-          "restored copy remains available after archive deletion")
+    check(restored_path.is_file() and
+          restored_path.read_bytes() == expected_after_user_edit,
+          "restored user-edited copy remains byte-for-byte unchanged after archive deletion")
     check(active.is_file() and active.read_bytes() == active_bytes,
           "active source fixture remains unchanged through the full lifecycle")
 
