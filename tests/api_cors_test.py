@@ -2,6 +2,11 @@
 """Check that the local API only grants browser CORS access to its local UI."""
 
 import http.client
+import json
+import os
+import pathlib
+import tempfile
+import time
 
 API_HOST = "127.0.0.1"
 API_PORT = 8080
@@ -58,16 +63,25 @@ def main() -> int:
     assert header(headers, "Access-Control-Allow-Origin") is None
     print("PASS: untrusted website requests are rejected")
 
-    status, headers, _ = request(
-        "POST",
-        "/api/scan",
-        UNTRUSTED_ORIGIN,
-        body='{"folderPath":"/tmp/sfv-cors-must-not-scan","inactiveDays":1}',
-        content_type="text/plain",
-    )
-    assert status == 403, f"untrusted simple POST returned HTTP {status}, expected 403"
-    assert header(headers, "Access-Control-Allow-Origin") is None
-    print("PASS: untrusted simple POST is rejected before scan routing")
+    with tempfile.TemporaryDirectory(prefix="sfv-cors-side-effect-") as temporary:
+        fixture = pathlib.Path(temporary) / "should-not-be-archived.txt"
+        fixture.write_text("Untrusted cross-origin scan must not touch this file.\\n", encoding="utf-8")
+        old_time = time.time() - (3 * 24 * 60 * 60)
+        os.utime(fixture, (old_time, old_time))
+
+        status, headers, _ = request(
+            "POST",
+            "/api/scan",
+            UNTRUSTED_ORIGIN,
+            body=json.dumps({"folderPath": str(pathlib.Path(temporary)), "inactiveDays": 1}),
+            content_type="text/plain",
+        )
+        assert status == 403, f"untrusted simple POST returned HTTP {status}, expected 403"
+        assert header(headers, "Access-Control-Allow-Origin") is None
+        assert fixture.is_file(), "untrusted POST changed or removed the source fixture"
+        assert fixture.read_text(encoding="utf-8").startswith("Untrusted cross-origin")
+        print("PASS: untrusted simple POST is rejected before scan routing")
+        print("PASS: rejected cross-origin POST leaves filesystem fixture unchanged")
 
     print("ALL API CORS TESTS PASSED")
     return 0
