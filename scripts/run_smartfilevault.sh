@@ -116,7 +116,7 @@ fi
 echo
 echo "SmartFileVault is running."
 echo "Frontend: http://127.0.0.1:$UI_PORT/"
-echo "API:      http://localhost:$API_PORT/"
+echo "API:      http://127.0.0.1:$API_PORT/"
 echo "Vault:    $VAULT_ROOT"
 echo
 echo "Scanning can archive files and remove originals after verification."
