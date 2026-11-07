@@ -618,6 +618,32 @@ namespace
     }
 
 
+    std::string makeArchiveDeletionResponse(
+        const std::string& archiveId,
+        const ArchiveDeletionResult& result,
+        bool success,
+        bool reportUpdated
+    )
+    {
+        std::ostringstream json;
+        json << "{\n";
+        json << "  \"success\": " << (success ? "true" : "false") << ",\n";
+        json << "  \"archiveId\": \"" << jsonEscape(archiveId) << "\",\n";
+        json << "  \"archiveDeleted\": " << (result.archiveDeleted ? "true" : "false") << ",\n";
+        json << "  \"compressedRemoved\": " << (result.compressedRemoved ? "true" : "false") << ",\n";
+        json << "  \"metadataRemoved\": " << (result.metadataRemoved ? "true" : "false") << ",\n";
+        json << "  \"originalDeleted\": " << (result.originalDeleted ? "true" : "false") << ",\n";
+        json << "  \"originalPreserved\": " << (result.originalPreserved ? "true" : "false") << ",\n";
+        json << "  \"originalMissing\": " << (result.originalMissing ? "true" : "false") << ",\n";
+        json << "  \"originalStatus\": \"" << jsonEscape(result.originalStatus) << "\",\n";
+        json << "  \"partialFailure\": " << (result.partialFailure ? "true" : "false") << ",\n";
+        json << "  \"reportUpdated\": " << (reportUpdated ? "true" : "false") << ",\n";
+        json << "  \"errorCode\": \"" << jsonEscape(result.errorCode) << "\",\n";
+        json << "  \"message\": \"" << jsonEscape(result.message) << "\"\n";
+        json << "}";
+        return json.str();
+    }
+
     // Send all response bytes, including when send() writes partially.
     void sendResponse(
         int clientSocket,
@@ -629,7 +655,7 @@ namespace
         response += "HTTP/1.1 " + status + "\r\n";
         response += "Content-Type: application/json\r\n";
         response += "Access-Control-Allow-Origin: *\r\n";
-        response += "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+        response += "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n";
         response += "Access-Control-Allow-Headers: Content-Type\r\n";
         response += "Content-Length: " +
                     std::to_string(body.size()) + "\r\n";
@@ -746,8 +772,72 @@ bool startApiServer(
             continue;
         }
 
+        // DELETE one archive by its archiveId. The service validates the ID
+        // before constructing paths and reports any original file it preserved.
+        else if (method == "DELETE" && path.rfind("/api/archives/", 0) == 0) {
+            const std::string archiveId = path.substr(
+                std::string("/api/archives/").size()
+            );
+
+            if (archiveId.empty() ||
+                archiveId.find('/') != std::string::npos ||
+                archiveId.find('\\') != std::string::npos ||
+                archiveId.find('?') != std::string::npos) {
+                ArchiveDeletionResult invalidResult{};
+                invalidResult.errorCode = "invalid_archive_id";
+                invalidResult.message = "The archive ID in the URL is invalid.";
+                sendResponse(
+                    clientSocket,
+                    makeArchiveDeletionResponse(archiveId, invalidResult, false, false),
+                    "400 Bad Request"
+                );
+            }
+            else {
+                ArchiveDeletionResult result{};
+                const bool success = deleteArchiveFromVault(
+                    archiveRoot,
+                    archiveId,
+                    result
+                );
+
+                bool reportUpdated = false;
+                if (result.archiveDeleted) {
+                    const std::string reportPath =
+                        archiveRoot + "/vault_report.json";
+                    reportUpdated = saveVaultReport(archiveRoot, reportPath);
+                }
+
+                std::string status = "200 OK";
+                if (!success) {
+                    if (result.errorCode == "archive_not_found") {
+                        status = "404 Not Found";
+                    }
+                    else if (result.errorCode == "invalid_archive_id" ||
+                             result.errorCode == "invalid_metadata" ||
+                             result.errorCode == "invalid_metadata_name" ||
+                             result.errorCode == "unsafe_metadata_file" ||
+                             result.errorCode == "unsafe_archive_path" ||
+                             result.errorCode == "unsafe_compressed_artifact" ||
+                             result.errorCode == "vault_directories_unavailable") {
+                        status = "400 Bad Request";
+                    }
+                    else {
+                        status = "500 Internal Server Error";
+                    }
+                }
+
+                sendResponse(
+                    clientSocket,
+                    makeArchiveDeletionResponse(
+                        archiveId, result, success, reportUpdated
+                    ),
+                    status
+                );
+            }
+        }
+
         // GET dashboard statistics.
-        if (method == "GET" && path == "/api/dashboard") {
+        else if (method == "GET" && path == "/api/dashboard") {
             std::string reportPath =
                 archiveRoot + "/vault_report.json";
 

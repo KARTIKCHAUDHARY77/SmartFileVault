@@ -2,6 +2,7 @@
 #define VAULT_SERVICE_H
 
 #include "archive.h"
+#include "archive_service.h"
 #include "inactivity.h"
 
 #include <cstdint>
@@ -45,6 +46,12 @@ bool restoreFromArchive(
     const std::string& archiveId,
     const std::string& destinationDirectory,
     std::string& restoredPath
+);
+
+bool deleteArchiveFromVault(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveDeletionResult& result
 );
 
 bool getVaultSummary(
