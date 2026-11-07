@@ -313,6 +313,12 @@ function markArchiveRestored(archiveId) {
     );
 }
 
+function getArchiveRestoreActionText(archiveId) {
+    return getRestoredArchiveIds().has(archiveId)
+        ? "Restore Again"
+        : "Restore";
+}
+
 function getVisibleArchives(archives) {
     // Restoring an archive does not remove the compressed archive from the
     // backend vault. Keep it visible so storage totals and delete actions
@@ -407,9 +413,7 @@ async function displayFiles() {
         const restoreButton = document.createElement("button");
 
         restoreButton.type = "button";
-        restoreButton.textContent = file.status === "restored"
-            ? "Restore Again"
-            : "Restore";
+        restoreButton.textContent = getArchiveRestoreActionText(file.archiveId);
         restoreButton.addEventListener("click", () => {
             if (file.archiveId) openRestoreModal(file.archiveId);
         });
@@ -474,9 +478,7 @@ async function displayRestoreFiles() {
         details.appendChild(path);
 
         const button = document.createElement("button");
-        button.textContent = getRestoredArchiveIds().has(file.archiveId)
-            ? "Restore Again"
-            : "Restore";
+        button.textContent = getArchiveRestoreActionText(file.archiveId);
         button.type = "button";
         button.addEventListener("click", () => {
             openRestoreModal(file.archiveId);
