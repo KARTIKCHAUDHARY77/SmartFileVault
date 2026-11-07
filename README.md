@@ -92,7 +92,9 @@ and SHA-256 tests. It builds the production API entry point, starts it against
 a disposable vault, checks the dashboard and archive endpoints, and validates
 vault-report JSON for filenames containing tabs and quotes. It also builds a
 separate API smoke server and runs HTTP, request-parser, CORS/CSRF, frontend
-syntax, and frontend state regression tests. The same script is run by the
+syntax, frontend state regression tests, and a production-launcher smoke
+test that starts the app from outside the repository root and verifies that
+both local servers stop cleanly. The same script is run by the
 `.github/workflows/macos-regression.yml` workflow for pull requests and pushes
 targeting `main`. This is a targeted regression smoke suite, not a claim that
 every standalone test in `src/` is included.
@@ -106,10 +108,11 @@ brew install openssl@3
 bash scripts/run_smartfilevault.sh
 ```
 
-The launcher builds the production API server, starts the frontend and API on
-loopback-only ports, and opens the frontend in your default browser. Keep the
-terminal open while using the application; press `Ctrl+C` there to stop both
-servers.
+The launcher resolves the repository root automatically, builds the
+production API server, starts the frontend and API on loopback-only ports, and
+opens the frontend in your default browser. It can be invoked from another
+working directory. Keep the terminal open while using the application; press
+`Ctrl+C` there to stop both servers.
 
 - Frontend: `http://127.0.0.1:8081/`
 - API: `http://127.0.0.1:8080/`
@@ -221,7 +224,7 @@ This test covers the exact decompressed-size limit, empty files, malformed and t
 ### Run the end-to-end regression test
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 
 clang++ -std=c++17 -Wall -Wextra -pedantic \
   src/scan_restore_collision_test.cpp \
