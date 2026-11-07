@@ -820,6 +820,19 @@ bool startApiServer(
         std::string path = getPath(request);
         std::string body = getBody(request);
 
+        // Reject browser requests from untrusted origins before routing. This
+        // also blocks simple cross-origin POSTs that do not trigger preflight.
+        if (!requestOrigin.empty() &&
+            requestOrigin != "http://127.0.0.1:8081") {
+            respond(
+                clientSocket,
+                makeError("This local API does not accept requests from this origin."),
+                "403 Forbidden"
+            );
+            close(clientSocket);
+            continue;
+        }
+
         // Browser CORS preflight.
         if (method == "OPTIONS") {
             respond(clientSocket, "{}", "200 OK");
