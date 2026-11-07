@@ -109,7 +109,7 @@ terminal open while using the application; press `Ctrl+C` there to stop both
 servers.
 
 - Frontend: `http://127.0.0.1:8081/`
-- API: `http://localhost:8080/`
+- API: `http://127.0.0.1:8080/`
 - Default vault: `~/Library/Application Support/SmartFileVault/Vault`
 
 To choose a different persistent vault location:
