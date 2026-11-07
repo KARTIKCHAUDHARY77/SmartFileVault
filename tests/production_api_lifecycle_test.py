@@ -118,7 +118,7 @@ def main() -> None:
           restored_path.read_bytes() == expected,
           "restored output is byte-for-byte identical at the original location")
 
-    user_edit = b"\\nUser edit made after restoration.\\n"
+    user_edit = b"\nUser edit made after restoration.\n"
     with restored_path.open("ab") as restored_file:
         restored_file.write(user_edit)
     expected_after_user_edit = expected + user_edit
