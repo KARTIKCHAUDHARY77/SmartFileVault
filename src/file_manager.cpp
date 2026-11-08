@@ -17,10 +17,33 @@ static void recordSkipped(
         static_cast<int>(result.skippedDetails.size());
 }
 
+static bool isSameOrWithin(
+    const fs::path& candidate,
+    const fs::path& parent
+)
+{
+    const fs::path normalizedCandidate = candidate.lexically_normal();
+    const fs::path normalizedParent = parent.lexically_normal();
+    const fs::path relative =
+        normalizedCandidate.lexically_relative(normalizedParent);
+
+    if (relative.empty()) {
+        return normalizedCandidate == normalizedParent;
+    }
+
+    if (relative.is_absolute()) {
+        return false;
+    }
+
+    const auto first = relative.begin();
+    return first == relative.end() || *first != "..";
+}
+
 bool scanDirectory(
     const std::string& directoryPath,
     int inactiveDays,
-    FileScanResult& result
+    FileScanResult& result,
+    const std::string& excludedDirectoryPath
 )
 {
     result.files.clear();
@@ -32,14 +55,40 @@ bool scanDirectory(
     }
 
     std::error_code error;
-    const fs::path root(directoryPath);
+    const fs::path requestedRoot(directoryPath);
 
-    if (!fs::exists(root, error) || error) {
+    if (!fs::exists(requestedRoot, error) || error) {
         return false;
     }
 
-    if (!fs::is_directory(root, error) || error) {
+    if (!fs::is_directory(requestedRoot, error) || error) {
         return false;
+    }
+
+    const fs::path root =
+        fs::weakly_canonical(requestedRoot, error);
+
+    if (error) {
+        return false;
+    }
+
+    fs::path excludedRoot;
+
+    if (!excludedDirectoryPath.empty()) {
+        excludedRoot = fs::weakly_canonical(
+            fs::path(excludedDirectoryPath),
+            error
+        );
+
+        // Fail closed if the exclusion path cannot be resolved.
+        if (error) {
+            return false;
+        }
+
+        // Do not scan the vault itself or a directory inside it.
+        if (isSameOrWithin(root, excludedRoot)) {
+            return false;
+        }
     }
 
     try {
@@ -58,6 +107,30 @@ bool scanDirectory(
 
         while (iterator != end) {
             const fs::path itemPath = iterator->path();
+
+            // Exclude the vault subtree without counting it as skipped.
+            if (!excludedRoot.empty() &&
+                isSameOrWithin(itemPath, excludedRoot)) {
+                std::error_code directoryError;
+
+                if (iterator->is_directory(directoryError)) {
+                    iterator.disable_recursion_pending();
+                }
+
+                iterator.increment(error);
+
+                if (error) {
+                    recordSkipped(
+                        result,
+                        root.string(),
+                        "Could not continue scanning directory: " +
+                            error.message()
+                    );
+                    break;
+                }
+
+                continue;
+            }
 
             try {
                 std::error_code typeError;
