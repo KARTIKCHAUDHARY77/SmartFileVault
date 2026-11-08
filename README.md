@@ -67,50 +67,222 @@ The main objectives of SmartFileVault are:
             |
             v
        File Restoration
+```
 
 ---
 
-## Build Requirements
+## Build and Test (macOS)
 
-SmartFileVault requires:
+Requirements: Clang with C++17 support, Python 3, zlib, and OpenSSL 3
+(`brew install zlib openssl@3`). The commands below assume OpenSSL at
+`/opt/homebrew/opt/openssl@3` (Apple Silicon Homebrew).
 
-- C++17 compatible compiler
-- zlib for GZIP compression and decompression
-- OpenSSL 3 for SHA-256 file integrity verification
+### Run the automated macOS regression smoke suite
 
-### macOS Dependencies (Apple Silicon)
-
-Install using Homebrew:
+From the repository root:
 
 ```bash
-brew install zlib openssl@3
+brew install openssl@3
+bash tests/run_macos_regression.sh
 ```
 
-The commands below assume OpenSSL is at `/opt/homebrew/opt/openssl@3`.
+This script builds and runs the core compression round-trip, compression-policy,
+scanner reliability and temporary-output isolation, bounded-decompression,
+and SHA-256 tests. It builds the production API entry point, starts it against
+a disposable vault, checks the dashboard and archive endpoints, and validates
+vault-report JSON for filenames containing tabs and quotes. It also builds a
+separate API smoke server and runs HTTP, request-parser, CORS/CSRF, frontend
+syntax, frontend state regression tests, and a production-launcher smoke
+test that starts the app from outside the repository root and verifies that
+both local servers stop cleanly. The same script is run by the
+`.github/workflows/macos-regression.yml` workflow for pull requests and pushes
+targeting `main`. This is a targeted regression smoke suite, not a claim that
+every standalone test in `src/` is included.
 
-### Compile and Run the Compression Tests
+### Run the complete web application (macOS)
 
-Test executables are written to `/tmp` so they do not end up in the repository.
+From the repository root:
+
+```bash
+brew install openssl@3
+bash scripts/run_smartfilevault.sh
+```
+
+The launcher resolves the repository root automatically, builds the
+production API server, starts the frontend and API on loopback-only ports, and
+opens the frontend in your default browser. It can be invoked from another
+working directory. Keep the terminal open while using the application; press
+`Ctrl+C` there to stop both servers.
+
+- Frontend: `http://127.0.0.1:8081/`
+- API: `http://127.0.0.1:8080/`
+- Default vault: `~/Library/Application Support/SmartFileVault/Vault`
+
+To choose a different persistent vault location:
+
+```bash
+SFV_VAULT_ROOT="$HOME/Documents/SmartFileVault-Vault" bash scripts/run_smartfilevault.sh
+```
+
+The browser API only grants CORS access to the local frontend origin started
+by this launcher. Do not open `frontend/index.html` directly as a `file://`
+URL or serve it from another origin; use the launcher.
+
+**Important:** scanning is a filesystem-changing operation. Eligible inactive
+files may be archived and their originals removed after verification. For the
+first run, choose a disposable test folder and verify scan, restore, and delete
+behaviour before selecting personal folders.
+
+### Build the API test server
+
+Run from the repository root:
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/api_server_test.cpp \
+  src/api_server.cpp \
+  src/application_service.cpp \
+  src/file_manager.cpp \
+  src/inactivity.cpp \
+  src/scan_report.cpp \
+  src/vault_service.cpp \
+  src/archive_service.cpp \
+  src/archive.cpp \
+  src/compression.cpp \
+  src/compression_policy.cpp \
+  src/file_utils.cpp \
+  src/restore.cpp \
+  src/restore_safety.cpp \
+  src/vault_report.cpp \
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_api_server
+```
+
+### Start the API server
+
+Use a dedicated terminal and a temporary working directory:
+
+```bash
+API_RUN_DIR="$(mktemp -d /tmp/sfv-api-run.XXXXXX)"
+cd "$API_RUN_DIR"
+/tmp/sfv_api_server
+```
+
+Keep the server running while testing. Press `Ctrl+C` in that terminal to stop it.
+
+### Run the API tests
+
+In another terminal:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+
+python3 tests/api_smoke_test.py \
+  --base-url http://127.0.0.1:8080
+
+python3 tests/api_request_parser_test.py
+```
+
+Only use the smoke test's optional scan mode with disposable test data and the required side-effect confirmation option.
+
+### Run restore-space safety tests
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/restore_safety_test.cpp \
+  src/restore_safety.cpp \
+  src/archive.cpp \
+  src/compression.cpp \
+  src/compression_policy.cpp \
+  src/file_utils.cpp \
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_restore_safety_test
+
+TEST_DIR="$(mktemp -d /tmp/sfv-safety.XXXXXX)"
+(cd "$TEST_DIR" && /tmp/sfv_restore_safety_test)
+```
+
+### Run bounded decompression and GZIP integrity tests
+
+Run from the repository root:
+
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/decompression_limit_test.cpp \
+  src/compression.cpp \
+  -lz -o /tmp/sfv_decompression_limit_test
+
+/tmp/sfv_decompression_limit_test
+```
+
+This test covers the exact decompressed-size limit, empty files, malformed and truncated GZIP streams, checksum corruption, trailing bytes, concatenated GZIP members, and temporary-output cleanup.
+
+### Run the end-to-end regression test
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+
+clang++ -std=c++17 -Wall -Wextra -pedantic \
+  src/scan_restore_collision_test.cpp \
+  src/application_service.cpp \
+  src/file_manager.cpp \
+  src/inactivity.cpp \
+  src/scan_report.cpp \
+  src/vault_service.cpp \
+  src/archive_service.cpp \
+  src/archive.cpp \
+  src/compression.cpp \
+  src/compression_policy.cpp \
+  src/file_utils.cpp \
+  src/restore.cpp \
+  src/restore_safety.cpp \
+  -I/opt/homebrew/opt/openssl@3/include \
+  -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lz \
+  -o /tmp/sfv_scan_restore_collision_test
+
+/tmp/sfv_scan_restore_collision_test
+```
+
+### Run the compression tests
+
+Each command writes its executable to `/tmp`. Set this once:
 
 ```bash
 OPENSSL=/opt/homebrew/opt/openssl@3
-
-clang++ -std=c++17 -Wall -Wextra -pedantic \
--I"$OPENSSL/include" \
-src/compression_test.cpp src/compression.cpp \
--L"$OPENSSL/lib" -lcrypto -lz \
--o /tmp/sfv_compression_test && /tmp/sfv_compression_test
 ```
 
-Other compression tests use the same command with different sources:
+Then build and run a test (replace `SOURCES` with the row from the table):
 
-| Test | Sources |
+```bash
+clang++ -std=c++17 -Wall -Wextra -pedantic -Isrc -I"$OPENSSL/include" \
+  SOURCES -L"$OPENSSL/lib" -lcrypto -lz -o /tmp/sfv_test && /tmp/sfv_test
+```
+
+| Test | SOURCES |
 |------|---------|
-| Compression policy | `src/compression_policy_test.cpp src/compression_policy.cpp` |
-| Corruption handling | `src/compression_corruption_test.cpp src/compression.cpp` |
-| Compression percentage | `src/compression_percentage_test.cpp src/compression.cpp` |
+| Round trip | `src/compression_test.cpp src/compression.cpp` |
+| Policy | `src/compression_policy_test.cpp src/compression_policy.cpp` |
+| Corruption | `src/compression_corruption_test.cpp src/compression.cpp` |
+| Percentage | `src/compression_percentage_test.cpp src/compression.cpp` |
+| Real-data percentage | `src/compression_real_percentage_test.cpp src/compression.cpp` |
+| Edge file sizes | `src/compression_edge_sizes_test.cpp src/compression.cpp` |
 | Incompressible file | `src/incompressible_file_test.cpp src/archive.cpp src/compression.cpp` |
-| Source change during compression | `src/compression_source_change_test.cpp src/compression.cpp` (add `-DSFV_ENABLE_TEST_HOOK`) |
+| Source change | `src/compression_source_change_test.cpp src/compression.cpp` (also add `-DSFV_ENABLE_TEST_HOOK`) |
 
 `-DSFV_ENABLE_TEST_HOOK` enables a test-only hook in `compression.cpp`.
 Never use it for a normal or production build.
+
+### Final change checks
+
+```bash
+cd ~/Desktop/SmartFileVault
+git diff --check
+git status --short
+git diff --stat
+```
+
+Review all changes before committing. Stage only explicitly reviewed files.

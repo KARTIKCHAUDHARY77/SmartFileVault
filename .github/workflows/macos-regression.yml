@@ -1,0 +1,39 @@
+name: macOS Regression
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-regression:
+    name: C++ and API regression (macOS)
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install native dependencies
+        run: brew install openssl@3
+
+      - name: Run regression smoke suite
+        run: bash tests/run_macos_regression.sh

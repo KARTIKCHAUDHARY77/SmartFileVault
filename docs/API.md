@@ -34,8 +34,14 @@ Error responses use this structure:
 
 The exact message depends on the endpoint and failure condition.
 
-The server sends CORS headers allowing requests from browser clients.
+The API binds to the loopback interface. Browser CORS access is granted only
+to the local frontend origin `http://127.0.0.1:8081` started by
+`scripts/run_smartfilevault.sh`. Other website origins are rejected with HTTP 403 before API routing, including
+simple cross-origin POST requests that would not trigger a browser preflight.
 This does not replace input validation or other security controls.
+
+Open the frontend through the launcher rather than a `file://` URL or a
+different web-server origin, so browser requests use the configured allowlist.
 
 ## 4. GET /api/dashboard
 
@@ -221,7 +227,90 @@ The precise restoration outcome depends on the archive and filesystem
 state. Test collision handling using disposable files before relying
 on a specific overwrite or renaming behavior.
 
-## 9. OPTIONS requests
+## 9. DELETE /api/archives/{archiveId}
+
+Permanently removes one archive selected by its archive ID.
+
+Example request:
+
+```bash
+curl -i -X DELETE \
+  http://127.0.0.1:8080/api/archives/ACTUAL_ARCHIVE_ID
+```
+
+The archive ID is validated before any metadata path is constructed. The
+backend derives the compressed and metadata paths from the configured vault
+root and refuses unsafe or inconsistent paths.
+
+The response reports each deletion step:
+
+| Field | Type | Description |
+|---|---|---|
+| success | boolean | Whether the requested deletion completed without a partial failure |
+| archiveId | string | Requested archive identifier |
+| archiveDeleted | boolean | Whether the compressed artifact and metadata are absent |
+| compressedRemoved | boolean | Whether the compressed artifact was removed or was already missing |
+| metadataRemoved | boolean | Whether the metadata file was removed |
+| originalDeleted | boolean | Whether the verified original file was removed |
+| originalPreserved | boolean | Whether an original-path file was deliberately preserved |
+| originalMissing | boolean | Whether the original file or its parent path was already missing |
+| originalStatus | string | Reason the original was deleted, missing, or preserved |
+| partialFailure | boolean | Whether some deletion steps completed before a later step failed |
+| reportUpdated | boolean | Whether `vault_report.json` was refreshed immediately |
+| errorCode | string | Machine-readable failure code, empty on success |
+| message | string | Human-readable result or recovery information |
+
+The backend only deletes the original when the versioned filesystem identity
+stored in the metadata matches the file at the recorded original path. The
+identity includes device, inode, size, nanosecond modification/change times,
+and birth time where the platform exposes it. It does not follow a final
+symlink. A replacement file, symlink, non-regular file, or legacy original
+without identity metadata is preserved. A missing original or missing parent
+directory does not prevent removal of the archived data. Legacy metadata remains
+readable; it simply lacks the identity record needed to authorize original-file
+deletion.
+
+The compressed archive is removed first, followed by metadata. The original
+is considered only after both archive artifacts are removed. If an artifact
+cannot be removed, the operation reports its partial state and does not
+proceed to delete the original. If report generation fails after deletion,
+`reportUpdated` is false; subsequent dashboard/archive GET requests regenerate
+the report from the catalogue.
+
+Vault lifecycle operations invoked through `vault_service` are serialized
+within the running process, including scan/archive processing, restore,
+permanent deletion, and summary reads. The local HTTP server itself also
+processes requests synchronously. This does not coordinate with a separate
+SmartFileVault process or unrelated tools that mutate the filesystem.
+The service rechecks the original's identity immediately before `unlink`, but
+POSIX does not offer a portable atomic compare-and-unlink operation, so a
+separate process with permission to rename entries in the original's parent
+directory could still create a narrow time-of-check/time-of-use race.
+
+The `FILEID:v1` record is an identity guard against accidental replacement and
+stale paths, not a keyed signature or MAC. It does not authenticate metadata
+against an attacker who can rewrite the vault metadata and fabricate identity
+fields. The application assumes the vault metadata directory is writable only
+by the trusted local user/application.
+
+Expected status codes:
+
+- 200 OK: archived data and metadata were removed. The original may have been
+  deleted, already missing, or safely preserved with an explanatory status.
+- 400 Bad Request: invalid archive ID, malformed metadata, an unsafe metadata
+  file, or an unsafe recorded archive path.
+- 404 Not Found: no metadata exists for the requested archive ID.
+- 500 Internal Server Error: a deletion step or durability operation failed;
+  inspect the response fields because a partial deletion may have occurred.
+
+The frontend displays this exact confirmation before sending the request:
+
+> This will permanently delete the archived file and its original file (if it exists). This action cannot be undone.
+
+After a deletion response, the frontend refreshes Dashboard, Files/Archives,
+and Restore views. The server's CORS method allow-list includes DELETE.
+
+## 10. OPTIONS requests
 
 The server supports OPTIONS requests for browser preflight handling.
 
@@ -232,7 +321,7 @@ curl -i -X OPTIONS http://127.0.0.1:8080/api/scan
 The current implementation responds with HTTP 200 and an empty JSON
 object.
 
-## 10. Run API smoke tests
+## 11. Run API smoke tests
 
 From the repository root, with the API server running:
 
@@ -245,7 +334,7 @@ starting a scan or restoring an archive.
 The test script also permits an optional scan when explicitly requested.
 Review the selected folder before allowing that operation.
 
-## 11. Current limitations and testing notes
+## 12. Current limitations and testing notes
 
 - The API server must be running before requests can succeed.
 - A saved scan report may not exist until a scan has been performed.

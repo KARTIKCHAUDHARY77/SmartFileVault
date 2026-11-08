@@ -1,4 +1,3 @@
-
 #include "file_manager.h"
 
 #include <filesystem>
@@ -15,6 +14,12 @@ static void recordSkipped(
     result.skippedDetails.push_back({path, reason});
     result.skippedFiles =
         static_cast<int>(result.skippedDetails.size());
+}
+
+static bool isTemporaryOutputName(const fs::path& path)
+{
+    const std::string name = path.filename().string();
+    return name.rfind(".sfv-output-", 0) == 0;
 }
 
 static bool isSameOrWithin(
@@ -65,27 +70,21 @@ bool scanDirectory(
         return false;
     }
 
-    const fs::path root =
-        fs::weakly_canonical(requestedRoot, error);
-
+    const fs::path root = fs::weakly_canonical(requestedRoot, error);
     if (error) {
         return false;
     }
 
     fs::path excludedRoot;
-
     if (!excludedDirectoryPath.empty()) {
         excludedRoot = fs::weakly_canonical(
-            fs::path(excludedDirectoryPath),
-            error
+            fs::path(excludedDirectoryPath), error
         );
 
-        // Fail closed if the exclusion path cannot be resolved.
         if (error) {
             return false;
         }
 
-        // Do not scan the vault itself or a directory inside it.
         if (isSameOrWithin(root, excludedRoot)) {
             return false;
         }
@@ -108,17 +107,16 @@ bool scanDirectory(
         while (iterator != end) {
             const fs::path itemPath = iterator->path();
 
-            // Exclude the vault subtree without counting it as skipped.
+            // Prune the vault subtree without counting its contents as skipped.
             if (!excludedRoot.empty() &&
                 isSameOrWithin(itemPath, excludedRoot)) {
                 std::error_code directoryError;
-
-                if (iterator->is_directory(directoryError)) {
+                if (iterator->is_directory(directoryError) &&
+                    !directoryError) {
                     iterator.disable_recursion_pending();
                 }
 
                 iterator.increment(error);
-
                 if (error) {
                     recordSkipped(
                         result,
@@ -128,7 +126,6 @@ bool scanDirectory(
                     );
                     break;
                 }
-
                 continue;
             }
 
@@ -145,6 +142,17 @@ bool scanDirectory(
                         typeError.message()
                     );
                 }
+                else if (isTemporaryOutputName(itemPath)) {
+                    // Ignore SmartFileVault compression temporary files.
+                    // Do not delete or modify them.
+                    // Do not scan inside matching temporary directories.
+                    std::error_code directoryError;
+
+                    if (iterator->is_directory(directoryError) &&
+                        !directoryError) {
+                        iterator.disable_recursion_pending();
+                    }
+                }
                 else if (iterator->is_regular_file(typeError)) {
                     if (typeError) {
                         recordSkipped(
@@ -154,31 +162,21 @@ bool scanDirectory(
                         );
                     }
                     else {
-                        const std::string filename =
-                            itemPath.filename().string();
+                        FileMetadata metadata{};
 
-                        // Ignore SmartFileVault compression temporary files.
-                        if (filename.rfind(".sfv-output-", 0) == 0) {
-                            // Intentionally ignored.
-                            // Do not delete or count as skipped.
+                        if (getFileMetadata(
+                                itemPath.string(),
+                                inactiveDays,
+                                metadata
+                            )) {
+                            result.files.push_back(metadata);
                         }
                         else {
-                            FileMetadata metadata{};
-
-                            if (getFileMetadata(
-                                    itemPath.string(),
-                                    inactiveDays,
-                                    metadata
-                                )) {
-                                result.files.push_back(metadata);
-                            }
-                            else {
-                                recordSkipped(
-                                    result,
-                                    itemPath.string(),
-                                    "Could not read file metadata"
-                                );
-                            }
+                            recordSkipped(
+                                result,
+                                itemPath.string(),
+                                "Could not read file metadata"
+                            );
                         }
                     }
                 }

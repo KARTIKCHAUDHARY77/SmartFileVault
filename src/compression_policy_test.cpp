@@ -1,6 +1,6 @@
-#include <chrono>
 #include "compression_policy.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -9,108 +9,94 @@
 
 namespace fs = std::filesystem;
 
-struct PolicyTestCase {
-    std::string fileName;
-    CompressionDecision expected;
-};
+static bool createTestFile(const fs::path& path) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return false;
+    }
+
+    file << "SmartFileVault compression policy test.";
+    file.close();
+    return !file.fail();
+}
+
+static bool checkDecision(const std::string& description,
+                          const fs::path& path,
+                          CompressionDecision expected) {
+    const CompressionDecision actual =
+        getCompressionDecision(path.string());
+
+    if (actual != expected) {
+        std::cerr << "FAIL: " << description
+                  << " | expected " << decisionToString(expected)
+                  << ", got " << decisionToString(actual) << '\n';
+        return false;
+    }
+
+    std::cout << "PASS: " << description << " -> "
+              << decisionToString(actual) << '\n';
+    return true;
+}
 
 int main() {
-    const std::vector<PolicyTestCase> testCases = {
-        {"policy_notes.txt", CompressionDecision::Compress},
-        {"policy_code.cpp", CompressionDecision::Compress},
-        {"policy_data.csv", CompressionDecision::Compress},
-        {"policy_photo.jpg", CompressionDecision::Compress},
-        {"policy_image.png", CompressionDecision::Compress},
-        {"policy_video.mp4", CompressionDecision::Compress},
-        {"policy_music.mp3", CompressionDecision::Compress},
-        {"policy_archive.zip", CompressionDecision::Compress},
-        {"policy_archive.rar", CompressionDecision::Compress},
-        {"policy_archive.7z", CompressionDecision::Compress}
+    const auto uniqueId =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path root = fs::temp_directory_path() /
+        ("sfv_policy_test_" + std::to_string(uniqueId));
+
+    std::error_code error;
+    if (!fs::create_directory(root, error) || error) {
+        std::cerr << "FAIL: Could not create temporary directory\n";
+        return 1;
+    }
+
+    const std::vector<std::string> eligibleNames = {
+        "notes.txt", "code.cpp", "table.csv", "scan.pdf",
+        "picture.jpg", "picture.png", "clip.mp4", "clip.mkv",
+        "voice.mp3", "voice.wav", "bundle.zip", "bundle.7z",
+        "no_extension", "unknown.custom", "UPPER.JPEG"
     };
 
-    const auto uniqueId =
-    std::chrono::steady_clock::now()
-        .time_since_epoch()
-        .count();
+    bool passed = true;
+    for (const std::string& name : eligibleNames) {
+        const fs::path path = root / name;
+        if (!createTestFile(path)) {
+            std::cerr << "FAIL: Could not create fixture "
+                      << name << '\n';
+            passed = false;
+            continue;
+        }
 
-const fs::path testDirectory =
-    fs::temp_directory_path() /
-    ("smartfilevault_policy_test_" + std::to_string(uniqueId));
+        passed &= checkDecision(name, path, CompressionDecision::Compress);
+    }
 
-std::error_code error;
-fs::create_directory(testDirectory, error);
+    const fs::path missing = root / "missing.txt";
+    passed &= checkDecision("Missing file", missing,
+                            CompressionDecision::SkipInvalidFile);
 
+    const fs::path directory = root / "directory.txt";
+    error.clear();
+    if (!fs::create_directory(directory, error) || error) {
+        std::cerr << "FAIL: Could not create directory fixture\n";
+        passed = false;
+    } else {
+        passed &= checkDecision("Directory is invalid", directory,
+                                CompressionDecision::SkipInvalidFile);
+    }
+
+    error.clear();
+    fs::remove_all(root, error);
     if (error) {
-        std::cerr << "FAIL: Could not create test directory: "
+        std::cerr << "FAIL: Cleanup failed: "
                   << error.message() << '\n';
+        passed = false;
+    }
+
+    if (!passed) {
+        std::cerr << "COMPRESSION POLICY TESTS FAILED\n";
         return 1;
     }
 
-    int failures = 0;
-
-    for (const auto& testCase : testCases) {
-        const fs::path filePath = testDirectory / testCase.fileName;
-
-        {
-            std::ofstream file(filePath, std::ios::binary);
-            if (!file) {
-                std::cerr << "FAIL: Could not create "
-                          << filePath << '\n';
-                ++failures;
-                continue;
-            }
-            file << "SmartFileVault compression policy test.\n";
-        }
-
-        const CompressionDecision actual =
-            getCompressionDecision(filePath.string());
-
-        const bool passed = actual == testCase.expected;
-
-        std::cout << (passed ? "PASS: " : "FAIL: ")
-                  << testCase.fileName << " -> "
-                  << decisionToString(actual) << '\n';
-
-        if (!passed) {
-            ++failures;
-        }
-    }
-
-    const fs::path missingFile = testDirectory / "does_not_exist.txt";
-    const CompressionDecision missingDecision =
-        getCompressionDecision(missingFile.string());
-
-    if (missingDecision == CompressionDecision::SkipInvalidFile) {
-        std::cout << "PASS: missing file rejected\n";
-    } else {
-        std::cerr << "FAIL: missing file was not rejected\n";
-        ++failures;
-    }
-
-    const CompressionDecision directoryDecision =
-        getCompressionDecision(testDirectory.string());
-
-    if (directoryDecision == CompressionDecision::SkipInvalidFile) {
-        std::cout << "PASS: directory rejected\n";
-    } else {
-        std::cerr << "FAIL: directory was not rejected\n";
-        ++failures;
-    }
-
-    std::error_code cleanupError;
-    fs::remove_all(testDirectory, cleanupError);
-
-    if (cleanupError) {
-        std::cerr << "FAIL: Could not clean test directory: "
-                  << cleanupError.message() << '\n';
-        ++failures;
-    }
-
-    if (failures != 0) {
-        std::cerr << "Policy tests failed: " << failures << '\n';
-        return 1;
-    }
-
-    std::cout << "All compression policy tests passed.\n";
+    std::cout << "ALL COMPRESSION POLICY TESTS PASSED\n";
     return 0;
 }

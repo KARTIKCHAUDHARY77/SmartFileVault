@@ -1,0 +1,421 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+CXX="${CXX:-clang++}"
+PYTHON="${PYTHON:-python3}"
+OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3)}"
+
+if ! command -v "$CXX" >/dev/null 2>&1; then
+    echo "ERROR: C++ compiler not found: $CXX" >&2
+    exit 1
+fi
+
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    echo "ERROR: Python 3 not found: $PYTHON" >&2
+    exit 1
+fi
+
+if [[ ! -d "$OPENSSL_PREFIX/include" || ! -d "$OPENSSL_PREFIX/lib" ]]; then
+    echo "ERROR: OpenSSL 3 headers/libraries not found at: $OPENSSL_PREFIX" >&2
+    exit 1
+fi
+
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-build.XXXXXX")"
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sfv-ci-run.XXXXXX")"
+SERVER_PID=""
+PRODUCTION_SERVER_PID=""
+LAUNCHER_PID=""
+
+cleanup() {
+    if [[ -n "$LAUNCHER_PID" ]]; then
+        kill -TERM "$LAUNCHER_PID" >/dev/null 2>&1 || true
+        wait "$LAUNCHER_PID" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$PRODUCTION_SERVER_PID" ]]; then
+        kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+        wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$SERVER_PID" ]]; then
+        kill "$SERVER_PID" >/dev/null 2>&1 || true
+        wait "$SERVER_PID" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$BUILD_DIR" "$RUN_DIR"
+}
+trap cleanup EXIT
+
+COMMON_FLAGS=(
+    -std=c++17
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Isrc
+    "-I$OPENSSL_PREFIX/include"
+)
+
+LINK_FLAGS=(
+    "-L$OPENSSL_PREFIX/lib"
+    -lcrypto
+    -lz
+    -pthread
+)
+
+build_test() {
+    local name="$1"
+    shift
+    echo
+    echo "========== BUILD: $name =========="
+    "$CXX" "${COMMON_FLAGS[@]}" "$@" "${LINK_FLAGS[@]}" \
+        -o "$BUILD_DIR/$name"
+}
+
+run_test() {
+    local name="$1"
+    local work_dir="$RUN_DIR/$name"
+    mkdir -p "$work_dir"
+    echo
+    echo "========== RUN: $name =========="
+    (cd "$work_dir" && "$BUILD_DIR/$name")
+}
+
+# Core compression behavior and byte-exact round trips.
+build_test compression_test \
+    src/compression_test.cpp \
+    src/compression.cpp
+run_test compression_test
+
+# Extension-independent compression eligibility and invalid-file rejection.
+build_test compression_policy_test \
+    src/compression_policy_test.cpp \
+    src/compression_policy.cpp
+run_test compression_policy_test
+
+# Scanner reliability, invalid input and temporary-output isolation.
+build_test file_manager_test \
+    src/file_manager_test.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp
+run_test file_manager_test
+
+build_test file_manager_temporary_output_test \
+    src/file_manager_temporary_output_test.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp
+run_test file_manager_temporary_output_test
+
+# Strict expected-size GZIP decompression and malformed-stream rejection.
+build_test decompression_limit_test \
+    src/decompression_limit_test.cpp \
+    src/compression.cpp
+run_test decompression_limit_test
+
+# SHA-256 propagation, verification, legacy call compatibility, and no-overwrite behavior.
+build_test compression_sha256_test \
+    src/compression_sha256_test.cpp \
+    src/compression.cpp
+run_test compression_sha256_test
+
+# Compile the real web-app API entry point (not the disposable test harness).
+build_test sfv_api_server \
+    src/api_server_main.cpp \
+    src/api_server.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
+    src/vault_report.cpp
+"$BUILD_DIR/sfv_api_server" --help
+
+# Exercise the production entry point against a disposable persistent vault.
+# This is separate from the API test harness built below.
+PRODUCTION_VAULT="$RUN_DIR/production-api-vault"
+PRODUCTION_API_LOG="$RUN_DIR/production-api.log"
+"$BUILD_DIR/sfv_api_server" --vault-root "$PRODUCTION_VAULT" \
+    >"$PRODUCTION_API_LOG" 2>&1 &
+PRODUCTION_SERVER_PID="$!"
+
+production_ready=0
+for attempt in $(seq 1 100); do
+    if ! kill -0 "$PRODUCTION_SERVER_PID" >/dev/null 2>&1; then
+        echo "ERROR: production API server exited during startup." >&2
+        cat "$PRODUCTION_API_LOG" >&2
+        exit 1
+    fi
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:8080/api/dashboard \
+        -o "$RUN_DIR/production-dashboard.json"; then
+        production_ready=1
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$production_ready" -ne 1 ]]; then
+    echo "ERROR: production API did not become ready." >&2
+    cat "$PRODUCTION_API_LOG" >&2
+    kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/production-dashboard.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+required = {
+    "archiveCount", "originalSize", "compressedSize", "spaceSaved",
+    "restoreSafetySpace", "freeSpace", "archives",
+}
+missing = required - data.keys()
+if missing:
+    raise SystemExit(f"Production dashboard is missing fields: {sorted(missing)}")
+if data["archiveCount"] != 0 or data["archives"] != []:
+    raise SystemExit("Fresh production vault should begin empty")
+print("PASS: production entry point starts with a fresh persistent vault")
+print("PASS: production dashboard returns a valid empty-vault JSON summary")
+PY
+
+if ! curl --silent --show-error --fail \
+    http://127.0.0.1:8080/api/archives \
+    -o "$RUN_DIR/production-archives.json"; then
+    echo "ERROR: production GET /api/archives failed." >&2
+    kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/production-archives.json" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if not isinstance(data.get("archives"), list) or data["archives"]:
+    raise SystemExit("Fresh production archive list should be an empty array")
+print("PASS: production GET /api/archives returns an empty archive catalogue")
+PY
+
+echo
+echo "========== PRODUCTION API LIFECYCLE REGRESSION =========="
+"$PYTHON" tests/production_api_lifecycle_test.py \
+    --base-url http://127.0.0.1:8080 \
+    --vault-root "$PRODUCTION_VAULT" \
+    --work-root "$RUN_DIR/production-lifecycle"
+
+kill "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+wait "$PRODUCTION_SERVER_PID" >/dev/null 2>&1 || true
+PRODUCTION_SERVER_PID=""
+
+# Permanent-delete HTTP integration: verified original removal, repeat-delete
+# handling, encoded traversal rejection, and catalogue/report refresh.
+build_test archive_delete_api_test_server \
+    tests/archive_delete_api_test_server.cpp \
+    src/api_server.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
+    src/vault_report.cpp
+"$PYTHON" tests/archive_delete_api_test.py "$BUILD_DIR/archive_delete_api_test_server"
+
+# The vault report must remain valid JSON even when a legal filename contains
+# tabs or quotes (both are legal characters on macOS/POSIX filesystems).
+build_test vault_report_json_test \
+    src/vault_report_json_test.cpp \
+    src/vault_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp
+"$PYTHON" tests/vault_report_json_test.py --binary "$BUILD_DIR/vault_report_json_test"
+
+# Validate the local-origin CORS policy and preflight support.
+bash -n scripts/run_smartfilevault.sh
+
+# Build the real API server with the production application/service sources.
+echo
+echo "========== BUILD: API SERVER =========="
+"$CXX" "${COMMON_FLAGS[@]}" \
+    src/api_server_test.cpp \
+    src/api_server.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
+    src/vault_report.cpp \
+    "${LINK_FLAGS[@]}" \
+    -o "$BUILD_DIR/sfv_api_server"
+
+# Use a disposable working directory because the server fixture writes files
+# relative to its current directory. The parser test's successful scan uses a
+# 36,500-day threshold and a disposable one-file directory.
+API_WORK_DIR="$RUN_DIR/api-server"
+mkdir -p "$API_WORK_DIR"
+
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: TCP port 8080 is already in use; refusing to test against another process." >&2
+    exit 1
+fi
+
+cd "$API_WORK_DIR"
+"$BUILD_DIR/sfv_api_server" >"$RUN_DIR/api-server.log" 2>&1 &
+SERVER_PID="$!"
+cd "$ROOT"
+
+echo
+echo "========== WAIT FOR API SERVER =========="
+API_READY=0
+for attempt in $(seq 1 100); do
+    if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+        echo "ERROR: API server exited during startup." >&2
+        cat "$RUN_DIR/api-server.log" >&2
+        exit 1
+    fi
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:8080/api/archives >/dev/null 2>&1; then
+        API_READY=1
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$API_READY" -ne 1 ]]; then
+    echo "ERROR: API server did not become ready on port 8080." >&2
+    cat "$RUN_DIR/api-server.log" >&2
+    exit 1
+fi
+
+echo
+echo "========== API HTTP SMOKE TESTS =========="
+"$PYTHON" tests/api_smoke_test.py \
+    --base-url http://127.0.0.1:8080
+
+echo
+echo "========== API REQUEST PARSER TESTS =========="
+"$PYTHON" tests/api_request_parser_test.py
+
+echo
+echo "========== API CORS ALLOWLIST TESTS =========="
+"$PYTHON" tests/api_cors_test.py
+
+echo
+echo "========== FRONTEND JAVASCRIPT SYNTAX =========="
+if command -v node >/dev/null 2>&1; then
+    node --check frontend/script.js
+else
+    echo "ERROR: Node.js is required for the frontend syntax check." >&2
+    exit 1
+fi
+
+echo
+echo "========== FRONTEND STATE REGRESSION =========="
+node tests/frontend_state_test.js
+
+# Stop the standalone smoke API before testing the production launcher.
+kill "$SERVER_PID" >/dev/null 2>&1 || true
+wait "$SERVER_PID" >/dev/null 2>&1 || true
+SERVER_PID=""
+
+# The launcher must work even when called from outside the repository root.
+# SFV_SKIP_OPEN keeps this CI test headless while exercising real startup/cleanup.
+echo
+echo "========== PRODUCTION LAUNCHER WORKING-DIRECTORY TEST =========="
+LAUNCHER_VAULT="$RUN_DIR/launcher-vault"
+LAUNCHER_LOG="$RUN_DIR/launcher.log"
+(
+    cd "$RUN_DIR"
+    export SFV_VAULT_ROOT="$LAUNCHER_VAULT"
+    export SFV_SKIP_OPEN=1
+    exec bash "$ROOT/scripts/run_smartfilevault.sh"
+) >"$LAUNCHER_LOG" 2>&1 &
+LAUNCHER_PID="$!"
+
+LAUNCHER_READY=0
+for attempt in $(seq 1 100); do
+    if ! kill -0 "$LAUNCHER_PID" >/dev/null 2>&1; then
+        echo "ERROR: production launcher exited during startup." >&2
+        cat "$LAUNCHER_LOG" >&2
+        exit 1
+    fi
+    if curl --silent --show-error --fail \
+        http://127.0.0.1:8081/ -o "$RUN_DIR/launcher-index.html" &&
+       curl --silent --show-error --fail \
+        http://127.0.0.1:8080/api/dashboard -o "$RUN_DIR/launcher-dashboard.json"; then
+        LAUNCHER_READY=1
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ "$LAUNCHER_READY" -ne 1 ]]; then
+    echo "ERROR: production launcher did not serve frontend and API." >&2
+    cat "$LAUNCHER_LOG" >&2
+    exit 1
+fi
+
+"$PYTHON" - "$RUN_DIR/launcher-index.html" "$RUN_DIR/launcher-dashboard.json" "$LAUNCHER_VAULT" <<'PY'
+import json
+import pathlib
+import sys
+
+index = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+dashboard = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+vault = pathlib.Path(sys.argv[3])
+
+if "SmartFileVault" not in index:
+    raise SystemExit("Launcher frontend response did not contain the app HTML")
+if dashboard.get("archiveCount") != 0 or dashboard.get("archives") != []:
+    raise SystemExit("Launcher API did not use the isolated empty vault")
+if not vault.is_dir():
+    raise SystemExit("Launcher did not create the configured vault")
+print("PASS: launcher serves the frontend when invoked from another directory")
+print("PASS: launcher API uses the configured disposable vault")
+PY
+
+kill -TERM "$LAUNCHER_PID" >/dev/null 2>&1 || true
+wait "$LAUNCHER_PID" >/dev/null 2>&1 || true
+LAUNCHER_PID=""
+
+if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1 ||
+   lsof -nP -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "ERROR: production launcher left a server process listening after shutdown." >&2
+    cat "$LAUNCHER_LOG" >&2
+    exit 1
+fi
+echo "PASS: launcher termination stops both local servers"
+
+echo
+echo "========== MACOS REGRESSION SMOKE SUITE PASSED =========="

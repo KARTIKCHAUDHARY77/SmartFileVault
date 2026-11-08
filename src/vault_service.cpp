@@ -1,3 +1,4 @@
+
 #include "vault_service.h"
 
 #include "archive_service.h"
@@ -6,8 +7,15 @@
 #include "restore_safety.h"
 
 #include <filesystem>
+#include <iostream>
+#include <mutex>
+#include <string>
 
 namespace fs = std::filesystem;
+
+// Serialize vault lifecycle operations within this process so scanning/
+// archiving, restore, deletion, and summary reads cannot race one another.
+static std::mutex vaultOperationMutex;
 
 bool processCandidate(
     const std::string& filePath,
@@ -15,6 +23,7 @@ bool processCandidate(
     ArchiveMetadata& metadata
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     if (!fs::exists(filePath) ||
         !fs::is_regular_file(filePath)) {
 
@@ -42,6 +51,7 @@ bool processInactiveFiles(
     ProcessResult& result
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     result.totalFiles =
         static_cast<int>(files.size());
 
@@ -102,6 +112,18 @@ bool restoreFromArchive(
     std::string& restoredPath
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
+    // Reject invalid IDs before constructing any metadata path.
+    if (!isSafeArchiveId(archiveId)) {
+
+        restoredPath.clear();
+
+        std::cerr
+            << "Restore error: invalid archive ID.\n";
+
+        return false;
+    }
+
     std::string metadataPath =
         archiveRoot +
         "/metadata/" +
@@ -130,11 +152,30 @@ bool restoreFromArchive(
 }
 
 
+bool deleteArchiveFromVault(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    ArchiveDeletionResult& result
+)
+{
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
+    if (!isSafeArchiveId(archiveId)) {
+        result = ArchiveDeletionResult{};
+        result.errorCode = "invalid_archive_id";
+        result.message = "The archive ID is invalid.";
+        return false;
+    }
+
+    return permanentlyDeleteArchive(archiveRoot, archiveId, result);
+}
+
+
 bool getVaultSummary(
     const std::string& archiveRoot,
     VaultSummary& summary
 )
 {
+    std::lock_guard<std::mutex> operationLock(vaultOperationMutex);
     summary.archiveCount = 0;
     summary.originalSize = 0;
     summary.compressedSize = 0;
@@ -142,28 +183,28 @@ bool getVaultSummary(
     summary.restoreSafetySpace = 0;
     summary.freeSpace = 0;
 
-    std::vector<ArchiveMetadata> archives =
+    const std::vector<ArchiveMetadata> archives =
         getAllArchives(archiveRoot);
 
-    summary.archiveCount =
-        archives.size();
+    std::uintmax_t originalTotal = 0;
+    std::uintmax_t compressedTotal = 0;
 
-    for (const ArchiveMetadata& archive :
-         archives) {
-
-        summary.originalSize +=
-            archive.originalSize;
-
-        summary.compressedSize +=
-            archive.compressedSize;
+    // Do not publish a partial or wrapped summary when archive totals
+    // cannot be represented by std::uintmax_t.
+    if (!tryGetTotalOriginalSize(archiveRoot, originalTotal) ||
+        !tryGetTotalCompressedSize(archiveRoot, compressedTotal)) {
+        std::cerr
+            << "Vault summary error: archive storage totals overflow.\n";
+        summary = VaultSummary{};
+        return false;
     }
 
-    if (summary.originalSize >
-        summary.compressedSize) {
+    summary.archiveCount = archives.size();
+    summary.originalSize = originalTotal;
+    summary.compressedSize = compressedTotal;
 
-        summary.spaceSaved =
-            summary.originalSize -
-            summary.compressedSize;
+    if (originalTotal > compressedTotal) {
+        summary.spaceSaved = originalTotal - compressedTotal;
     }
 
     summary.restoreSafetySpace =

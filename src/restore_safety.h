@@ -9,6 +9,7 @@
 struct RestoreStorageStatus {
     std::uintmax_t requiredSpace;
     std::uintmax_t freeSpace;
+    bool spaceCheckSucceeded;
     bool enoughSpace;
 };
 

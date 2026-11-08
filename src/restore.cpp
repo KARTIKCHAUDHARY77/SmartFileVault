@@ -1,3 +1,4 @@
+
 #include "restore.h"
 
 #include "compression.h"
@@ -7,8 +8,42 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 
 namespace fs = std::filesystem;
+
+// Reject metadata filenames that could escape the selected destination.
+static bool isSafeRestoreFilename(const std::string& originalName)
+{
+    if (originalName.empty() ||
+        originalName == "." ||
+        originalName == "..") {
+        return false;
+    }
+
+    // Filenames must not contain path separators or embedded null bytes.
+    if (originalName.find('/') != std::string::npos ||
+        originalName.find('\\') != std::string::npos ||
+        originalName.find('\0') != std::string::npos) {
+        return false;
+    }
+
+    // Reject control characters in metadata-supplied filenames.
+    for (unsigned char character : originalName) {
+        if (character < 0x20 || character == 0x7F) {
+            return false;
+        }
+    }
+
+    const fs::path filename(originalName);
+
+    // A restored name must be one relative filename, not a path.
+    return !filename.is_absolute() &&
+           !filename.has_root_name() &&
+           !filename.has_root_directory() &&
+           !filename.has_parent_path() &&
+           filename.filename() == filename;
+}
 
 static fs::path getSafeFilePath(
     const fs::path& directory,
@@ -141,6 +176,15 @@ bool restoreArchive(
         return false;
     }
 
+    // Validate the filename before it is used in any output path.
+    if (!isSafeRestoreFilename(metadata.originalName)) {
+
+        std::cerr
+            << "Restore error: unsafe filename in archive metadata.\n";
+
+        return false;
+    }
+
     std::cout
         << "Restore: metadata loaded.\n";
 
@@ -212,6 +256,13 @@ bool restoreArchive(
             destination.string()
         );
 
+    if (!storage.spaceCheckSucceeded) {
+        std::cerr
+            << "Restore error: could not determine available free space. "
+            << "Check the destination path and permissions.\n";
+        return false;
+    }
+
     if (!storage.enoughSpace) {
 
         std::cerr
@@ -241,9 +292,25 @@ bool restoreArchive(
         << outputPath.string()
         << "\n";
 
+    const unsigned int outputPermissions =
+        metadata.hasOriginalPermissions
+            ? metadata.originalPermissions
+            : 0600U;
+
+    // Legacy metadata has no digest and continues through the compatible
+    // size/GZIP validation path. New metadata must pass SHA-256 verification
+    // before decompressFile atomically publishes the restored output.
+    const std::string expectedSha256 =
+        metadata.hasOriginalSha256
+            ? metadata.originalSha256
+            : std::string{};
+
     if (!decompressFile(
             metadata.archivePath,
-            outputPath.string())) {
+            outputPath.string(),
+            metadata.originalSize,
+            outputPermissions,
+            expectedSha256)) {
 
         std::cerr
             << "Restore error: decompression failed.\n";
