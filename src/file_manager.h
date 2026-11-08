@@ -19,6 +19,7 @@ struct FileScanResult {
 
 bool scanDirectory(const std::string& directoryPath,
                    int inactiveDays,
-                   FileScanResult& result);
+                   FileScanResult& result,
+                   const std::string& excludedDirectoryPath = "");
 
 #endif

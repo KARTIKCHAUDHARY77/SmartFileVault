@@ -20,7 +20,7 @@ bool runScanAndArchive(const std::string& directoryPath,
     FileScanResult scanResult;
 
     // Scan the selected directory first.
-    if (!scanDirectory(directoryPath, inactiveDays, scanResult)) {
+    if (!scanDirectory(directoryPath, inactiveDays, scanResult, archiveRoot)) {
         return false;
     }
 
