@@ -519,9 +519,9 @@ async function confirmDeleteArchive(archiveId) {
     }
 
     const confirmationMessage =
-        "Permanently delete BOTH the compressed archive and its original file?\\n\\n" +
+        "Permanently delete BOTH the compressed archive and its original file?\n\n" +
         "The original is removed only if it still matches the file identity recorded when it was archived. " +
-        "If it has changed, is missing, or cannot be safely verified, it will be preserved.\\n\\n" +
+        "If it has changed, is missing, or cannot be safely verified, it will be preserved.\n\n" +
         "This action cannot be undone.";
 
     if (!window.confirm(confirmationMessage)) {
