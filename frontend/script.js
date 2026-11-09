@@ -420,7 +420,7 @@ async function displayFiles() {
 
         const deleteButton = document.createElement("button");
         deleteButton.type = "button";
-        deleteButton.textContent = "Delete";
+        deleteButton.textContent = "Delete Both";
         deleteButton.className = "action-button delete-button";
         deleteButton.addEventListener("click", () => {
             confirmDeleteArchive(file.archiveId);
@@ -485,7 +485,7 @@ async function displayRestoreFiles() {
         });
 
         const deleteButton = document.createElement("button");
-        deleteButton.textContent = "Delete";
+        deleteButton.textContent = "Delete Both";
         deleteButton.type = "button";
         deleteButton.className = "action-button delete-button";
         deleteButton.addEventListener("click", () => {
@@ -519,7 +519,10 @@ async function confirmDeleteArchive(archiveId) {
     }
 
     const confirmationMessage =
-        "This will permanently delete the archived file and its original file (if it exists). This action cannot be undone.";
+        "Permanently delete BOTH the compressed archive and its original file?\\n\\n" +
+        "The original is removed only if it still matches the file identity recorded when it was archived. " +
+        "If it has changed, is missing, or cannot be safely verified, it will be preserved.\\n\\n" +
+        "This action cannot be undone.";
 
     if (!window.confirm(confirmationMessage)) {
         return;
@@ -537,15 +540,25 @@ async function confirmDeleteArchive(archiveId) {
     }
 
     if (!result.success) {
-        let message = result.message || "Permanent archive deletion failed.";
+        let message = result.message || "Delete Both could not be completed.";
+        if (result.originalPreserved) {
+            message += "\nThe original file was preserved because it could not be safely verified as the archived original.";
+        } else if (result.originalMissing) {
+            message += "\nThe original file was already missing; the archive artifacts were handled separately.";
+        }
         if (result.partialFailure) {
-            message += "\nSome deletion steps completed. Check the reported status before retrying.";
+            message += "\nSome deletion steps completed. Review the status before retrying.";
         }
         alert(message);
         return;
     }
 
-    let message = result.message || "Archive deleted successfully.";
+    let message = result.message || "Delete Both completed successfully.";
+    if (result.originalPreserved) {
+        message += "\nThe original file was preserved because its identity no longer matches the archived file.";
+    } else if (result.originalMissing) {
+        message += "\nThe original file was already missing.";
+    }
     if (!result.reportUpdated) {
         message += "\nThe vault report could not be refreshed immediately. It will be regenerated when the dashboard or archive list is loaded.";
     }
