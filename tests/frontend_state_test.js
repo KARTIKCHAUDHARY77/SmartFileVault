@@ -97,11 +97,11 @@ console.log("PASS: deleting an archive clears its local restored marker");
 
 
 const sourceForDeleteUI = fs.readFileSync("frontend/script.js", "utf8");
-assert.equal((sourceForDeleteUI.match(/deleteButton\\.textContent = "Delete Both";/g) || []).length, 2);
+assert.equal((sourceForDeleteUI.match(/deleteButton\.textContent = "Delete Both";/g) || []).length, 2);
 assert.match(sourceForDeleteUI, /Permanently delete BOTH the compressed archive and its original file/);
 assert.match(sourceForDeleteUI, /file identity recorded when it was archived/);
-assert.match(sourceForDeleteUI, /result\\.originalPreserved/);
-assert.match(sourceForDeleteUI, /result\\.originalMissing/);
+assert.match(sourceForDeleteUI, /result\.originalPreserved/);
+assert.match(sourceForDeleteUI, /result\.originalMissing/);
 console.log("PASS: Files and Restore views expose the identity-safe Delete Both action");
 
 console.log("ALL FRONTEND STATE TESTS PASSED");
