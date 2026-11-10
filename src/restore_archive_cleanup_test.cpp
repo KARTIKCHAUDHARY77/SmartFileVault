@@ -182,11 +182,13 @@ int main()
     ArchiveRestoreResult metadataFailure{};
     const fs::path remainingMetadata = metadataFailureVault / "metadata" /
         (metadataFailureMeta.archiveId + ".meta");
+    const bool metadataRestoreReturned = restoreFromArchive(
+        metadataFailureVault.string(), metadataFailureMeta.archiveId,
+        (temporary.path / "metadata-failure-out").string(), metadataFailure
+    );
     const std::vector<ArchiveMetadata> partiallyCleanedCatalogue =
         getAllArchives(metadataFailureVault.string());
-    if (!check(restoreFromArchive(
-                   metadataFailureVault.string(), metadataFailureMeta.archiveId,
-                   (temporary.path / "metadata-failure-out").string(), metadataFailure) &&
+    if (!check(metadataRestoreReturned &&
                metadataFailure.restored && metadataFailure.partialFailure &&
                metadataFailure.compressedRemoved && !metadataFailure.metadataRemoved &&
                !fs::exists(metadataFailureMeta.archivePath) &&
