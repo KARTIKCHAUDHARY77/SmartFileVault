@@ -20,6 +20,19 @@ struct VaultSummary {
     std::uintmax_t freeSpace;
 };
 
+struct ArchiveRestoreResult {
+    bool restored = false;
+    bool archiveDeleted = false;
+    bool compressedRemoved = false;
+    bool metadataRemoved = false;
+    bool partialFailure = false;
+    bool reportUpdated = false;
+    std::string archiveId;
+    std::string restoredPath;
+    std::string errorCode;
+    std::string message;
+};
+
 struct ProcessResult {
     int totalFiles;
     int inactiveFiles;
@@ -39,6 +52,15 @@ bool processInactiveFiles(
     const std::vector<FileMetadata>& files,
     const std::string& archiveRoot,
     ProcessResult& result
+);
+
+// Structured lifecycle result for the Restore API. A true return means
+// the restored file was published; archive cleanup is reported separately.
+bool restoreFromArchive(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    const std::string& destinationDirectory,
+    ArchiveRestoreResult& result
 );
 
 bool restoreFromArchive(
