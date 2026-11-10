@@ -200,6 +200,54 @@ int main()
         return 1;
     }
 
+    // A compressed-directory sync failure leaves the metadata catalogue entry.
+    fs::path compressedSyncVault;
+    ArchiveMetadata compressedSyncMeta{};
+    std::string compressedSyncBytes;
+    if (!check(makeArchive(temporary.path, "compressed-sync", compressedSyncVault,
+                           compressedSyncMeta, compressedSyncBytes),
+               "compressed-directory sync fixture archived")) {
+        return 1;
+    }
+    failureStep = "restore_compressed_sync";
+    ArchiveRestoreResult compressedSync{};
+    if (!check(restoreFromArchive(
+                   compressedSyncVault.string(), compressedSyncMeta.archiveId,
+                   (temporary.path / "compressed-sync-out").string(), compressedSync) &&
+               compressedSync.restored && compressedSync.partialFailure &&
+               compressedSync.compressedRemoved && !compressedSync.metadataRemoved &&
+               !fs::exists(compressedSyncMeta.archivePath) &&
+               fs::exists(compressedSyncVault / "metadata" /
+                          (compressedSyncMeta.archiveId + ".meta")) &&
+               getAllArchives(compressedSyncVault.string()).size() == 1,
+               "compressed-directory sync failure preserves discoverable metadata")) {
+        return 1;
+    }
+
+    // A metadata-directory sync failure occurs after both names are removed.
+    fs::path metadataSyncVault;
+    ArchiveMetadata metadataSyncMeta{};
+    std::string metadataSyncBytes;
+    if (!check(makeArchive(temporary.path, "metadata-sync", metadataSyncVault,
+                           metadataSyncMeta, metadataSyncBytes),
+               "metadata-directory sync fixture archived")) {
+        return 1;
+    }
+    failureStep = "restore_metadata_sync";
+    ArchiveRestoreResult metadataSync{};
+    if (!check(restoreFromArchive(
+                   metadataSyncVault.string(), metadataSyncMeta.archiveId,
+                   (temporary.path / "metadata-sync-out").string(), metadataSync) &&
+               metadataSync.restored && metadataSync.partialFailure &&
+               metadataSync.archiveDeleted && metadataSync.compressedRemoved &&
+               metadataSync.metadataRemoved &&
+               !fs::exists(metadataSyncMeta.archivePath) &&
+               !fs::exists(metadataSyncVault / "metadata" /
+                           (metadataSyncMeta.archiveId + ".meta")),
+               "metadata-directory sync failure reports artifacts removed but partial durability status")) {
+        return 1;
+    }
+
     // Repeated restore after successful cleanup cannot restore again or damage the first output.
     failureStep.clear();
     ArchiveRestoreResult repeated{};
