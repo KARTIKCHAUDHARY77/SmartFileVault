@@ -71,6 +71,21 @@ The main objectives of SmartFileVault are:
 
 ---
 
+## Phase III Restore and archive lifecycle
+
+After a file has been restored, SmartFileVault removes the matching compressed
+archive (`.gz`) and metadata (`.meta`) only after the restored output has
+passed verification and has been safely published. A failed restore preserves
+the vault artifacts; a later cleanup or report-update failure is returned as
+a partial outcome without deleting the restored destination.
+
+The separate **Delete Both** action retains its original-file identity checks
+and symlink protections. See [docs/API.md](docs/API.md) for the full Restore
+and Delete Both response contracts, and
+[docs/PHASE_III_FINAL_HANDOVER.md](docs/PHASE_III_FINAL_HANDOVER.md) for the
+Phase III implementation, test evidence, launch steps and outstanding handover
+boundaries.
+
 ## Build and Test (macOS)
 
 Requirements: Clang with C++17 support, Python 3, zlib, and OpenSSL 3
