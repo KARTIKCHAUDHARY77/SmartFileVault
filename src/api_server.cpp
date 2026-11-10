@@ -687,6 +687,27 @@ namespace
         return json.str();
     }
 
+    std::string makeArchiveRestoreResponse(
+        const ArchiveRestoreResult& result
+    )
+    {
+        std::ostringstream json;
+        json << "{\n";
+        json << "  \"success\": " << (result.restored ? "true" : "false") << ",\n";
+        json << "  \"archiveId\": \"" << jsonEscape(result.archiveId) << "\",\n";
+        json << "  \"restored\": " << (result.restored ? "true" : "false") << ",\n";
+        json << "  \"restoredPath\": \"" << jsonEscape(result.restoredPath) << "\",\n";
+        json << "  \"archiveDeleted\": " << (result.archiveDeleted ? "true" : "false") << ",\n";
+        json << "  \"compressedRemoved\": " << (result.compressedRemoved ? "true" : "false") << ",\n";
+        json << "  \"metadataRemoved\": " << (result.metadataRemoved ? "true" : "false") << ",\n";
+        json << "  \"partialFailure\": " << (result.partialFailure ? "true" : "false") << ",\n";
+        json << "  \"reportUpdated\": " << (result.reportUpdated ? "true" : "false") << ",\n";
+        json << "  \"errorCode\": \"" << jsonEscape(result.errorCode) << "\",\n";
+        json << "  \"message\": \"" << jsonEscape(result.message) << "\"\n";
+        json << "}";
+        return json.str();
+    }
+
     // Send all response bytes, including when send() writes partially.
     void sendResponse(
         int clientSocket,
@@ -1025,53 +1046,48 @@ bool startApiServer(
             }
         }
 
-        // POST restore an archive to the selected destination.
+        // POST restore an archive, then regenerate the report after
+        // restoreFromArchive has released the vault-operation mutex.
         else if (method == "POST" && path == "/api/restore") {
-            std::string archiveId =
-                getJsonString(body, "archiveId");
-
-            std::string destination =
-                getJsonString(body, "destination");
+            const std::string archiveId = getJsonString(body, "archiveId");
+            const std::string destination = getJsonString(body, "destination");
 
             if (archiveId.empty() || destination.empty()) {
-                respond(
-                    clientSocket,
-                    makeError("Invalid restore parameters."),
-                    "400 Bad Request"
-                );
+                respond(clientSocket, makeError("Invalid restore parameters."), "400 Bad Request");
             }
             else {
-                std::string restoredPath;
-
-                bool success = restoreFromArchive(
-                    archiveRoot,
-                    archiveId,
-                    destination,
-                    restoredPath
+                ArchiveRestoreResult result{};
+                const bool restored = restoreFromArchive(
+                    archiveRoot, archiveId, destination, result
                 );
 
-                if (success) {
-                    std::ostringstream json;
-
-                    json << "{\n";
-                    json << "  \"success\": true,\n";
-                    json << "  \"restoredPath\": \""
-                         << jsonEscape(restoredPath)
-                         << "\"\n";
-                    json << "}";
-
-                    respond(
-                        clientSocket,
-                        json.str(),
-                        "200 OK"
-                    );
+                if (restored) {
+                    const std::string reportPath = archiveRoot + "/vault_report.json";
+                    result.reportUpdated = saveVaultReport(archiveRoot, reportPath);
+                    if (!result.reportUpdated) {
+                        result.partialFailure = true;
+                        if (result.errorCode.empty()) {
+                            result.errorCode = "report_update_failed";
+                        }
+                        if (!result.message.empty()) {
+                            result.message += " ";
+                        }
+                        result.message += "The restored file is safe, but the vault report could not be updated.";
+                    }
+                    respond(clientSocket, makeArchiveRestoreResponse(result), "200 OK");
                 }
                 else {
-                    respond(
-                        clientSocket,
-                        makeError("Restore operation failed."),
-                        "400 Bad Request"
-                    );
+                    const std::string status =
+                        result.errorCode == "archive_not_found" ? "404 Not Found" :
+                        (result.errorCode == "invalid_archive_id" ||
+                         result.errorCode == "invalid_metadata" ||
+                         result.errorCode == "invalid_metadata_name" ||
+                         result.errorCode == "unsafe_metadata_file" ||
+                         result.errorCode == "unsafe_archive_path" ||
+                         result.errorCode == "unsafe_compressed_artifact" ||
+                         result.errorCode == "vault_directories_unavailable")
+                            ? "400 Bad Request" : "422 Unprocessable Entity";
+                    respond(clientSocket, makeArchiveRestoreResponse(result), status);
                 }
             }
         }
