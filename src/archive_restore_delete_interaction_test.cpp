@@ -1,5 +1,6 @@
 
 #include "vault_service.h"
+#include "restore.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
