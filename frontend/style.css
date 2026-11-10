@@ -483,6 +483,17 @@ td {
     background: #f4f7fb;
 }
 
+.delete-button {
+    border-color: #e6b8b8;
+    color: #a92f2f;
+    margin-left: 7px;
+}
+
+.delete-button:hover {
+    background: #fff1f1;
+    border-color: #d98d8d;
+}
+
 
 /* RESTORE */
 

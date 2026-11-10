@@ -74,19 +74,19 @@ console.log("PASS: restored archive remains visible in vault views");
 
 assert.equal(
     context.getArchiveRestoreActionText("archive-restored"),
-    "Restore Again"
+    "Restore"
 );
 assert.equal(
     context.getArchiveRestoreActionText("archive-unrestored"),
     "Restore"
 );
-console.log("PASS: restored archive offers Restore Again");
+console.log("PASS: restore actions do not depend on stale local markers");
 
 assert.equal(
     context.getStatusText("restored"),
-    "Restored (archive retained)"
+    "Restored"
 );
-console.log("PASS: restored archive status explains that compressed copy remains");
+console.log("PASS: restored status no longer claims archive retention");
 
 context.forgetRestoredArchive("archive-restored");
 assert.equal(
@@ -94,5 +94,23 @@ assert.equal(
     "Restore"
 );
 console.log("PASS: deleting an archive clears its local restored marker");
+
+
+const sourceForDeleteUI = fs.readFileSync("frontend/script.js", "utf8");
+assert.equal((sourceForDeleteUI.match(/deleteButton\.textContent = "Delete Both";/g) || []).length, 2);
+assert.match(sourceForDeleteUI, /Permanently delete BOTH the compressed archive and its original file/);
+assert.match(sourceForDeleteUI, /file identity recorded when it was archived/);
+assert.match(sourceForDeleteUI, /result\.originalPreserved/);
+assert.match(sourceForDeleteUI, /result\.originalMissing/);
+console.log("PASS: Files and Restore views expose the identity-safe Delete Both action");
+
+const restoreHandlerStart = sourceForDeleteUI.indexOf("async function confirmRestore()");
+const restoreHandlerEnd = sourceForDeleteUI.indexOf("function formatBytes()", restoreHandlerStart);
+const restoreHandler = sourceForDeleteUI.slice(restoreHandlerStart, restoreHandlerEnd);
+assert.doesNotMatch(restoreHandler, /markArchiveRestored/);
+assert.match(restoreHandler, /result\.restored !== true/);
+assert.match(restoreHandler, /result\.partialFailure/);
+console.log("PASS: Restore UI trusts backend state and handles partial success");
+
 
 console.log("ALL FRONTEND STATE TESTS PASSED");

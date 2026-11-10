@@ -190,16 +190,24 @@ Use disposable test folders when testing this endpoint.
 
 ## 8. POST /api/restore
 
-Requests restoration of an archived file to a destination directory.
+Restores an archived file to a selected destination directory. Restoration and
+archive cleanup are separate outcomes: the backend first validates and
+decompresses the archive, verifies the expected output size and optional
+SHA-256 digest, and safely publishes the restored file. Only after successful
+publication does it remove the corresponding compressed archive and metadata.
+
+The restore-specific cleanup removes only the vault's `.gz` and `.meta`
+artifacts. It never removes the restored destination or the recorded original
+path. The existing `DELETE /api/archives/{archiveId}` operation remains the
+separate Delete Both workflow.
 
 Example request:
 
+```bash
 curl -i -X POST http://127.0.0.1:8080/api/restore \
   -H "Content-Type: application/json" \
   -d '{"archiveId":"ACTUAL_ARCHIVE_ID","destination":"/absolute/path/to/restore-folder"}'
-
-Replace the example archive ID with an existing archive identifier and
-use a suitable destination directory.
+```
 
 Request fields:
 
@@ -208,24 +216,111 @@ Request fields:
 | archiveId | string | Identifier of the archived file |
 | destination | string | Destination directory for restoration |
 
-A successful response contains:
+Successful restoration with complete cleanup and report update:
 
+```json
 {
   "success": true,
-  "restoredPath": "/actual/path/to/restored-file"
+  "archiveId": "SFV-...",
+  "restored": true,
+  "restoredPath": "/absolute/path/to/restore-folder/file.pdf",
+  "archiveDeleted": true,
+  "compressedRemoved": true,
+  "metadataRemoved": true,
+  "partialFailure": false,
+  "reportUpdated": true,
+  "errorCode": "",
+  "message": "File restored and archive artifacts removed successfully."
 }
+```
 
-The returned path identifies the restored file.
+Response fields:
+
+| Field | Type | Description |
+|---|---|---|
+| success | boolean | True when the destination file was successfully restored and published; false when restoration did not complete |
+| archiveId | string | Requested archive identifier |
+| restored | boolean | Whether the restored destination file was successfully published |
+| restoredPath | string | Actual published destination path, including a safe alternate filename when the requested name already exists |
+| archiveDeleted | boolean | Whether both the compressed archive and metadata names were removed |
+| compressedRemoved | boolean | Whether the compressed `.gz` artifact was removed |
+| metadataRemoved | boolean | Whether the `.meta` artifact was removed |
+| partialFailure | boolean | Whether archive cleanup, directory synchronization, or report generation was incomplete |
+| reportUpdated | boolean | Whether `vault_report.json` was regenerated after the restore lifecycle |
+| errorCode | string | Machine-readable failure code; empty when no error was reported |
+| message | string | Human-readable outcome and any cleanup/report recovery information |
+
+A restore that succeeds but encounters a later cleanup or report-update failure
+returns `success: true` and `restored: true`, because the destination file
+has already been safely published. The response sets `partialFailure: true`
+and reports the individual artifact states.
+
+Example: the compressed archive was removed but metadata cleanup failed:
+
+```json
+{
+  "success": true,
+  "archiveId": "SFV-...",
+  "restored": true,
+  "restoredPath": "/absolute/path/to/restore-folder/file.pdf",
+  "archiveDeleted": false,
+  "compressedRemoved": true,
+  "metadataRemoved": false,
+  "partialFailure": true,
+  "reportUpdated": true,
+  "errorCode": "metadata_delete_failed",
+  "message": "File restored successfully, but archive cleanup was incomplete."
+}
+```
+
+Example: the file was restored and archive cleanup completed, but report
+regeneration failed:
+
+```json
+{
+  "success": true,
+  "archiveId": "SFV-...",
+  "restored": true,
+  "restoredPath": "/absolute/path/to/restore-folder/file.pdf",
+  "archiveDeleted": true,
+  "compressedRemoved": true,
+  "metadataRemoved": true,
+  "partialFailure": true,
+  "reportUpdated": false,
+  "errorCode": "report_update_failed",
+  "message": "The restored file is safe, but the vault report could not be updated."
+}
+```
+
+When restoration fails before publication, `success` and `restored` are
+false and the archive artifacts are preserved. When cleanup is partial, the
+restored destination is not automatically removed or rolled back. Remaining
+metadata stays discoverable, and storage accounting reflects compressed bytes
+actually present in the vault.
+
+The restore path preserves the existing bounded decompression, strict GZIP
+validation, expected-size check, optional SHA-256 verification, permission
+behavior, no-overwrite publication, and file/directory synchronization.
+Legacy archives without a SHA-256 digest remain supported.
+
+The restore operation is serialized with other vault lifecycle operations
+within the running process. This does not coordinate separate application
+processes or unrelated tools that mutate the vault filesystem.
 
 Expected status codes:
 
-- 200 OK: restoration succeeds.
-- 400 Bad Request: required parameters are missing or restoration fails.
+- 200 OK: the file was successfully restored and published. Inspect
+  `archiveDeleted`, `partialFailure`, and `reportUpdated` to determine
+  whether cleanup and reporting also completed.
+- 400 Bad Request: missing request fields, invalid archive ID, malformed or
+  unsafe metadata, or invalid vault paths.
+- 404 Not Found: the archive metadata or compressed artifact is missing.
+- 422 Unprocessable Entity: restoration could not be completed, including
+  decompression, integrity, destination, capacity, or publication failures.
 
-The backend checks destination validity and available restore space.
-The precise restoration outcome depends on the archive and filesystem
-state. Test collision handling using disposable files before relying
-on a specific overwrite or renaming behavior.
+The frontend should refresh Dashboard, Files/Archives, and Restore from the
+backend catalogue after `restored: true`. It should not interpret a partial
+cleanup/report outcome as loss of the restored destination file.
 
 ## 9. DELETE /api/archives/{archiveId}
 
