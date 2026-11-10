@@ -492,6 +492,147 @@ namespace
     }
 }
 
+bool removeRestoredArchiveArtifacts(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    RestoreArchiveCleanupResult& result
+)
+{
+    result = RestoreArchiveCleanupResult{};
+
+    if (!isSafeArchiveId(archiveId)) {
+        result.errorCode = "invalid_archive_id";
+        result.message = "The archive ID is invalid.";
+        return false;
+    }
+
+    std::error_code pathError;
+    const fs::path root = fs::absolute(archiveRoot, pathError).lexically_normal();
+    if (pathError || root.empty()) {
+        result.errorCode = "invalid_archive_root";
+        result.message = "The vault location could not be resolved.";
+        return false;
+    }
+
+    const fs::path metadataDirectory = root / "metadata";
+    const fs::path compressedDirectory = root / "compressed";
+    if (!isRealDirectory(metadataDirectory) ||
+        !isRealDirectory(compressedDirectory)) {
+        result.errorCode = "vault_directories_unavailable";
+        result.message = "The vault metadata or compressed directory is missing or unsafe.";
+        return false;
+    }
+
+    const fs::path metadataPath = metadataDirectory / (archiveId + ".meta");
+    bool metadataExists = false;
+    int metadataFailure = 0;
+    if (!inspectRegularFileNoFollow(metadataPath, metadataExists, metadataFailure)) {
+        result.errorCode = (metadataFailure == EACCES || metadataFailure == EPERM)
+            ? "metadata_access_denied" : "unsafe_metadata_file";
+        result.message = "The archive metadata is not a safely accessible regular file.";
+        return false;
+    }
+    if (!metadataExists) {
+        result.errorCode = "archive_not_found";
+        result.message = "The archive metadata no longer exists.";
+        return false;
+    }
+
+    ArchiveMetadata metadata{};
+    if (!loadArchiveMetadata(metadataPath.string(), metadata) ||
+        metadata.archiveId != archiveId) {
+        result.errorCode = "invalid_metadata";
+        result.message = "The archive metadata is malformed or does not match the requested archive ID.";
+        return false;
+    }
+
+    const fs::path originalName(metadata.originalName);
+    if (metadata.originalName.empty() ||
+        metadata.originalName == "." || metadata.originalName == ".." ||
+        originalName.filename() != originalName ||
+        originalName.has_parent_path() ||
+        metadata.originalName.find('/') != std::string::npos ||
+        metadata.originalName.find('\\') != std::string::npos ||
+        metadata.originalName.find('\0') != std::string::npos) {
+        result.errorCode = "invalid_metadata_name";
+        result.message = "The original filename in metadata is unsafe.";
+        return false;
+    }
+
+    const fs::path expectedArchivePath =
+        fs::absolute(compressedDirectory /
+            (archiveId + "_" + metadata.originalName + ".gz"), pathError)
+            .lexically_normal();
+    if (pathError || !fs::path(metadata.archivePath).is_absolute() ||
+        fs::path(metadata.archivePath).lexically_normal() != expectedArchivePath) {
+        result.errorCode = "unsafe_archive_path";
+        result.message = "The recorded compressed path does not match this archive's expected vault location.";
+        return false;
+    }
+
+    bool compressedExists = false;
+    int compressedFailure = 0;
+    if (!inspectRegularFileNoFollow(
+            expectedArchivePath, compressedExists, compressedFailure)) {
+        result.errorCode = "unsafe_compressed_artifact";
+        result.message = "The compressed archive path is not a regular file.";
+        return false;
+    }
+    if (!compressedExists) {
+        result.errorCode = "archive_not_found";
+        result.message = "The compressed archive is missing; metadata was preserved.";
+        return false;
+    }
+
+    // Restore cleanup deliberately never inspects or unlinks metadata.originalPath.
+    const bool injectedCompressedFailure =
+        shouldFailDeletionStep("restore_compressed_unlink");
+    if (injectedCompressedFailure) {
+        errno = EACCES;
+    }
+    if (injectedCompressedFailure || ::unlink(expectedArchivePath.c_str()) != 0) {
+        result.errorCode = "compressed_delete_failed";
+        result.message = "The file was restored, but its compressed archive could not be removed: " +
+                         std::string(std::strerror(errno));
+        return false;
+    }
+    result.compressedRemoved = true;
+
+    if (shouldFailDeletionStep("restore_compressed_sync") ||
+        !syncDeletionDirectory(compressedDirectory)) {
+        result.partialFailure = true;
+        result.errorCode = "compressed_directory_sync_failed";
+        result.message = "The compressed archive was removed, but its directory could not be synchronized. Metadata was retained.";
+        return false;
+    }
+
+    const bool injectedMetadataFailure =
+        shouldFailDeletionStep("restore_metadata_unlink");
+    if (injectedMetadataFailure) {
+        errno = EACCES;
+    }
+    if (injectedMetadataFailure || ::unlink(metadataPath.c_str()) != 0) {
+        result.partialFailure = true;
+        result.errorCode = "metadata_delete_failed";
+        result.message = "The file was restored and its compressed archive removed, but metadata could not be removed: " +
+                         std::string(std::strerror(errno));
+        return false;
+    }
+    result.metadataRemoved = true;
+    result.archiveDeleted = true;
+
+    if (shouldFailDeletionStep("restore_metadata_sync") ||
+        !syncDeletionDirectory(metadataDirectory)) {
+        result.partialFailure = true;
+        result.errorCode = "metadata_directory_sync_failed";
+        result.message = "The archive artifacts were removed, but the metadata directory could not be synchronized.";
+        return false;
+    }
+
+    result.message = "The restored archive and its metadata were removed successfully.";
+    return true;
+}
+
 bool permanentlyDeleteArchive(
     const std::string& archiveRoot,
     const std::string& archiveId,
