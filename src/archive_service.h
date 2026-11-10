@@ -48,16 +48,17 @@ bool archiveAndRemoveOriginal(
     ArchiveMetadata& metadata
 );
 
-// Permanently remove one archive selected by archiveId. The compressed and
-// metadata paths are derived from the trusted archive root, not blindly taken
-// from metadata. An original is removed only when its recorded identity matches.
 // Remove only the compressed artifact and metadata after a verified restore.
+// This operation never removes metadata.originalPath.
 bool removeRestoredArchiveArtifacts(
     const std::string& archiveRoot,
     const std::string& archiveId,
     RestoreArchiveCleanupResult& result
 );
 
+// Permanently remove one archive selected by archiveId. The compressed and
+// metadata paths are derived from the trusted archive root, not blindly taken
+// from metadata. An original is removed only when its recorded identity matches.
 bool permanentlyDeleteArchive(
     const std::string& archiveRoot,
     const std::string& archiveId,
