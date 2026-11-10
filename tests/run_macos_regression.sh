@@ -245,6 +245,35 @@ build_test application_service_vault_exclusion_test \
     src/vault_report.cpp
 run_test application_service_vault_exclusion_test
 
+# Restore lifecycle: verify-before-publish, archive-only cleanup and failure handling.
+build_test restore_archive_cleanup_test \
+    -DSFV_ENABLE_TEST_HOOK \
+    src/restore_archive_cleanup_test.cpp \
+    src/vault_service.cpp \
+    src/inactivity.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp
+run_test restore_archive_cleanup_test
+
+# Restore cleanup and Delete Both are separate operations with separate safety rules.
+build_test archive_restore_delete_interaction_test \
+    src/archive_restore_delete_interaction_test.cpp \
+    src/vault_service.cpp \
+    src/inactivity.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp
+run_test archive_restore_delete_interaction_test
+
 # Permanent-delete HTTP integration: verified original removal, repeat-delete
 # handling, encoded traversal rejection, and catalogue/report refresh.
 build_test archive_delete_api_test_server \
