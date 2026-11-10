@@ -1053,7 +1053,11 @@ bool startApiServer(
             const std::string destination = getJsonString(body, "destination");
 
             if (archiveId.empty() || destination.empty()) {
-                respond(clientSocket, makeError("Invalid restore parameters."), "400 Bad Request");
+                ArchiveRestoreResult invalid{};
+                invalid.archiveId = archiveId;
+                invalid.errorCode = "invalid_restore_parameters";
+                invalid.message = "Both archiveId and destination are required.";
+                respond(clientSocket, makeArchiveRestoreResponse(invalid), "400 Bad Request");
             }
             else {
                 ArchiveRestoreResult result{};
