@@ -5,6 +5,17 @@
 
 #include <string>
 
+// Restore cleanup removes only the vault's .gz and .meta artifacts. It never
+// inspects or deletes metadata.originalPath.
+struct RestoreArchiveCleanupResult {
+    bool archiveDeleted = false;
+    bool compressedRemoved = false;
+    bool metadataRemoved = false;
+    bool partialFailure = false;
+    std::string errorCode;
+    std::string message;
+};
+
 struct ArchiveDeletionResult {
     bool archiveDeleted = false;
     bool compressedRemoved = false;
@@ -40,6 +51,13 @@ bool archiveAndRemoveOriginal(
 // Permanently remove one archive selected by archiveId. The compressed and
 // metadata paths are derived from the trusted archive root, not blindly taken
 // from metadata. An original is removed only when its recorded identity matches.
+// Remove only the compressed artifact and metadata after a verified restore.
+bool removeRestoredArchiveArtifacts(
+    const std::string& archiveRoot,
+    const std::string& archiveId,
+    RestoreArchiveCleanupResult& result
+);
+
 bool permanentlyDeleteArchive(
     const std::string& archiveRoot,
     const std::string& archiveId,
