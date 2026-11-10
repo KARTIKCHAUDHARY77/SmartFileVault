@@ -112,42 +112,76 @@ def main() -> None:
         payload={"archiveId": archive_id, "destination": str(source_root)},
     )
     restored_path = pathlib.Path(restored.get("restoredPath", ""))
-    check(status == 200 and restored.get("success") is True,
-          "production restore endpoint succeeds")
+    check(status == 200 and restored.get("success") is True and
+          restored.get("restored") is True,
+          "production restore endpoint reports successful publication")
+    check(restored.get("archiveDeleted") is True and
+          restored.get("compressedRemoved") is True and
+          restored.get("metadataRemoved") is True and
+          restored.get("partialFailure") is False,
+          "successful restore removes both vault artifacts")
+    check(restored.get("reportUpdated") is True,
+          "successful restore regenerates the vault report")
     check(restored_path == eligible and restored_path.is_file() and
           restored_path.read_bytes() == expected,
           "restored output is byte-for-byte identical at the original location")
+    check(not compressed_path.exists() and not metadata_path.exists(),
+          "restore removes compressed archive and metadata")
+
+    status, after_restore = request_json(base_url, "/api/dashboard")
+    check(status == 200 and after_restore.get("archiveCount") == 0 and
+          after_restore.get("archives") == [] and after_restore.get("compressedSize") == 0,
+          "dashboard and archive catalogue no longer include the restored archive")
 
     user_edit = b"\nUser edit made after restoration.\n"
     with restored_path.open("ab") as restored_file:
         restored_file.write(user_edit)
     expected_after_user_edit = expected + user_edit
     check(restored_path.read_bytes() == expected_after_user_edit,
-          "restored fixture accepts a user edit before archive deletion")
+          "restored file remains editable after automatic archive cleanup")
+
+    # Exercise the existing Delete Both route against a separate disposable archive.
+    delete_both = source_root / "delete-both.txt"
+    delete_both_bytes = b"Independent Delete Both regression fixture.\n" * 2000
+    delete_both.write_bytes(delete_both_bytes)
+    old_time = time.time() - (3 * 24 * 60 * 60)
+    os.utime(delete_both, (old_time, old_time))
+    status, second_scan = request_json(
+        base_url,
+        "/api/scan",
+        method="POST",
+        payload={"folderPath": str(source_root), "inactiveDays": 1},
+    )
+    check(status == 200 and second_scan.get("archivedFiles") == 1,
+          "separate disposable fixture archived for Delete Both regression")
+    status, second_catalogue = request_json(base_url, "/api/archives")
+    second_archives = second_catalogue.get("archives", [])
+    check(status == 200 and len(second_archives) == 1,
+          "separate Delete Both fixture appears in the vault")
+    delete_id = second_archives[0]["archiveId"]
+    delete_record = second_archives[0]
+    delete_compressed = pathlib.Path(delete_record["archivePath"])
+    delete_metadata = vault_root / "metadata" / f"{delete_id}.meta"
+    check(delete_compressed.is_file() and delete_metadata.is_file(),
+          "Delete Both fixture has both vault artifacts")
 
     status, deleted = request_json(
-        base_url,
-        f"/api/archives/{archive_id}",
-        method="DELETE",
+        base_url, f"/api/archives/{delete_id}", method="DELETE"
     )
     check(status == 200 and deleted.get("success") is True,
-          "production DELETE endpoint succeeds")
+          "existing Delete Both endpoint still succeeds independently")
     check(deleted.get("archiveDeleted") is True and
           deleted.get("compressedRemoved") is True and
           deleted.get("metadataRemoved") is True,
-          "production DELETE removes compressed archive and metadata")
-    check(deleted.get("originalPreserved") is True and
-          deleted.get("originalDeleted") is False and
-          deleted.get("originalMissing") is False and
-          deleted.get("originalStatus") == "preserved_identity_mismatch",
-          "production DELETE preserves a restored and subsequently modified original-path file")
+          "Delete Both removes its separate archive and metadata")
     check(deleted.get("reportUpdated") is True,
-          "production DELETE regenerates the vault report")
-    check(not compressed_path.exists() and not metadata_path.exists(),
-          "production vault no longer contains the deleted archive artifacts")
+          "Delete Both regenerates the vault report")
+    check(not delete_compressed.exists() and not delete_metadata.exists() and
+          not delete_both.exists(),
+          "Delete Both removes the verified original and vault artifacts")
     check(restored_path.is_file() and
           restored_path.read_bytes() == expected_after_user_edit,
-          "restored user-edited copy remains byte-for-byte unchanged after archive deletion")
+          "restored destination is untouched by subsequent Delete Both")
     check(active.is_file() and active.read_bytes() == active_bytes,
           "active source fixture remains unchanged through the full lifecycle")
 
@@ -155,7 +189,7 @@ def main() -> None:
     check(status == 200 and final_report.get("archiveCount") == 0 and
           final_report.get("archives") == [] and
           final_report.get("compressedSize") == 0,
-          "production dashboard reflects the empty vault after deletion")
+          "dashboard reflects the empty vault after restore and independent Delete Both")
 
     print("ALL PRODUCTION API LIFECYCLE TESTS PASSED")
 
