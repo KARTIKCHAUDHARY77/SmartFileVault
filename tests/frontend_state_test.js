@@ -104,9 +104,12 @@ assert.match(sourceForDeleteUI, /result\.originalPreserved/);
 assert.match(sourceForDeleteUI, /result\.originalMissing/);
 console.log("PASS: Files and Restore views expose the identity-safe Delete Both action");
 
-assert.doesNotMatch(sourceForDeleteUI, /markArchiveRestored\(archiveId\)/);
-assert.match(sourceForDeleteUI, /result\.restored !== true/);
-assert.match(sourceForDeleteUI, /result\.partialFailure/);
+const restoreHandlerStart = sourceForDeleteUI.indexOf("async function confirmRestore()");
+const restoreHandlerEnd = sourceForDeleteUI.indexOf("function formatBytes()", restoreHandlerStart);
+const restoreHandler = sourceForDeleteUI.slice(restoreHandlerStart, restoreHandlerEnd);
+assert.doesNotMatch(restoreHandler, /markArchiveRestored/);
+assert.match(restoreHandler, /result\.restored !== true/);
+assert.match(restoreHandler, /result\.partialFailure/);
 console.log("PASS: Restore UI trusts backend state and handles partial success");
 
 
