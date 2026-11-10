@@ -30,6 +30,12 @@ static void (*compressionTestHook)() = nullptr;
 void setCompressionTestHook(void (*hook)()) {
     compressionTestHook = hook;
 }
+
+static void (*decompressionPublicationTestHook)() = nullptr;
+
+void setDecompressionPublicationTestHook(void (*hook)()) {
+    decompressionPublicationTestHook = hook;
+}
 #endif
 
 using Sha256Hash = std::array<unsigned char, 32>;
@@ -859,6 +865,15 @@ bool decompressFile(
         std::cerr << "Decompression error: could not sync completed output.\n";
         success = false;
     }
+
+#ifdef SFV_ENABLE_TEST_HOOK
+    // Let lifecycle tests introduce a competing destination after the
+    // temporary output is fully verified and synchronized, immediately before
+    // the same atomic link() used in production.
+    if (success && decompressionPublicationTestHook != nullptr) {
+        decompressionPublicationTestHook();
+    }
+#endif
 
     // Publish only a complete, valid, size-matched single-member GZIP
     // stream. On every failure the RAII owner removes the temporary file.
