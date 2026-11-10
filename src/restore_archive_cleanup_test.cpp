@@ -165,7 +165,9 @@ int main()
     if (!check(postRestoreNames.count("success.bin") == 1 &&
                postRestoreNames.count("ordinary.txt") == 1 &&
                postRestoreNames.count("success.gz") == 0 &&
-               postRestoreNames.count("success.meta") == 0,
+               postRestoreNames.count("success.meta") == 0 &&
+               postRestoreScan.skippedFiles == 0 &&
+               postRestoreScan.skippedDetails.empty(),
                "post-restore scan sees restored and sibling files but no consumed vault artifacts")) {
         return 1;
     }
