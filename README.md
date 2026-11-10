@@ -294,7 +294,7 @@ Never use it for a normal or production build.
 ### Final change checks
 
 ```bash
-cd ~/Desktop/SmartFileVault
+cd "$(git rev-parse --show-toplevel)"
 git diff --check
 git status --short
 git diff --stat
