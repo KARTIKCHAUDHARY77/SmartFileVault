@@ -140,6 +140,56 @@ def main() -> None:
     check(restored_path.read_bytes() == expected_after_user_edit,
           "restored file remains editable after automatic archive cleanup")
 
+    # Report-update failure must not misreport an already-published restore as failed.
+    report_fixture = source_root / "report-failure.txt"
+    report_fixture_bytes = b"Restore report failure fixture.\n" * 2500
+    report_fixture.write_bytes(report_fixture_bytes)
+    old_time = time.time() - (3 * 24 * 60 * 60)
+    os.utime(report_fixture, (old_time, old_time))
+    status, report_scan = request_json(
+        base_url, "/api/scan", method="POST",
+        payload={"folderPath": str(source_root), "inactiveDays": 1},
+    )
+    check(status == 200 and report_scan.get("archivedFiles") == 1,
+          "report-failure fixture archived")
+    status, report_catalogue = request_json(base_url, "/api/archives")
+    report_archives = report_catalogue.get("archives", [])
+    check(status == 200 and len(report_archives) == 1,
+          "report-failure archive appears in catalogue")
+    report_archive = report_archives[0]
+    report_id = report_archive["archiveId"]
+    report_compressed = pathlib.Path(report_archive["archivePath"])
+    report_metadata = vault_root / "metadata" / f"{report_id}.meta"
+
+    report_path = vault_root / "vault_report.json"
+    report_path.unlink(missing_ok=True)
+    report_path.mkdir()
+    status, report_failure = request_json(
+        base_url, "/api/restore", method="POST",
+        payload={"archiveId": report_id, "destination": str(source_root)},
+    )
+    report_restored_path = pathlib.Path(report_failure.get("restoredPath", ""))
+    check(status == 200 and report_failure.get("success") is True and
+          report_failure.get("restored") is True,
+          "report-write failure does not reverse successful file publication")
+    check(report_failure.get("archiveDeleted") is True and
+          report_failure.get("compressedRemoved") is True and
+          report_failure.get("metadataRemoved") is True,
+          "restore cleanup completes even when report generation fails")
+    check(report_failure.get("partialFailure") is True and
+          report_failure.get("reportUpdated") is False and
+          report_failure.get("errorCode") == "report_update_failed",
+          "API distinguishes restored success with report-update failure")
+    check(report_restored_path.is_file() and
+          report_restored_path.read_bytes() == report_fixture_bytes and
+          not report_compressed.exists() and not report_metadata.exists(),
+          "report-update failure preserves restored bytes and does not recreate vault artifacts")
+    report_path.rmdir()
+    status, recovered_report = request_json(base_url, "/api/dashboard")
+    check(status == 200 and recovered_report.get("archiveCount") == 0 and
+          recovered_report.get("archives") == [],
+          "dashboard report can be regenerated after the report path is repaired")
+
     # Exercise the existing Delete Both route against a separate disposable archive.
     delete_both = source_root / "delete-both.txt"
     delete_both_bytes = b"Independent Delete Both regression fixture.\n" * 2000
