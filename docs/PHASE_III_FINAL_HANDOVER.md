@@ -23,7 +23,34 @@ The Phase III restore/archive-lifecycle implementation and its API documentation
 
 At the time of this handover audit, GitHub returned no open pull requests and no open issues. The latest post-merge macOS Regression run (#52) passed on commit `ebd2ffcf`.
 
-## 2. Restore lifecycle now in main
+## 2. Akshat-authored GitHub contributions
+
+The GitHub PR search for author `madhavakshat123-oss` identifies the following merged pull requests. This list is based on PR authorship, not an inference from branch names.
+
+| PR | Merged contribution |
+|---|---|
+| #1 | Connect scan reports to the backend API |
+| #2 | Add API smoke tests and endpoint documentation |
+| #3 | Add restore safety and regression tests |
+| #5 | Connect frontend scan and restore workflow to the API |
+| #6 | Validate restore filenames and archive IDs |
+| #7 | Harden compression file handling and percentage reporting |
+| #8 | Allow extension-independent lossless compression eligibility |
+| #9 | Verify exact lossless compression round trips |
+| #11 | Prevent archive storage-total overflow |
+| #13 | Reject overflowing vault storage summaries |
+| #16 | Integrate bounded decompression and archive durability improvements |
+| #17 | Enforce strict archive metadata numeric validation |
+| #18 | Persist and verify SHA-256 for archived files |
+| #20 | Implement safe permanent archive deletion |
+| #21 | Add the macOS C++/API regression smoke suite |
+| #22 | Add the production macOS web-app launcher |
+| #27 | Implement automatic archive cleanup after verified restore publication |
+| #28 | Document the automatic restore-cleanup API outcomes |
+
+This is the directly attributable Akshat-authored PR record found in the current repository audit. Team-authored contributions are recorded separately in the project PR history and are not attributed to Akshat here.
+
+## 3. Restore lifecycle now in main
 
 The restore workflow:
 
@@ -52,7 +79,7 @@ A published restore remains a restore success even when subsequent cleanup or re
 
 Full request/response details and examples are in [API.md](API.md).
 
-## 3. Other integrated safety and reliability work
+## 4. Other integrated safety and reliability work
 
 The current main branch also includes:
 
@@ -65,7 +92,7 @@ The current main branch also includes:
 - Scanner error/skipped-file reporting, symlink handling, temporary-output exclusion and vault-subtree exclusion.
 - A local production launcher that starts the frontend and API on loopback interfaces.
 
-## 4. Build and run on macOS
+## 5. Build and run on macOS
 
 Requirements: Clang with C++17, Python 3, Node.js, zlib and OpenSSL 3.
 
@@ -92,7 +119,7 @@ Open the frontend at `http://127.0.0.1:8081/`. Keep the launcher terminal open w
 
 **Scanning can remove eligible original files after successful archiving. Use a disposable source folder for demonstrations.**
 
-## 5. Verification recorded on 10 November 2026
+## 6. Verification recorded on 10 November 2026
 
 ### Automated
 
@@ -118,7 +145,7 @@ Using disposable test data under `~/Developer/SFV-restore-manual-test`:
 
 These manual checks used only disposable fixtures, not real user vault archives.
 
-## 6. Current known boundaries and pending non-code confirmations
+## 7. Current known boundaries and pending non-code confirmations
 
 - The current macOS CI runner is targeted; individual standalone tests not listed in that runner still need to be run separately when full exhaustive unit-test coverage is required.
 - The PR #27 discussion included the response contract for Aastha and the filesystem/concurrency review points for Kartik. This handover audit did not establish independent written acceptance from either teammate.
@@ -126,7 +153,7 @@ These manual checks used only disposable fixtures, not real user vault archives.
 - No GitHub Release/tag was present at the time of this audit. Creating a versioned release should follow the team's submission/release decision rather than happen implicitly.
 - The final academic project report, presentation deck, demo script/video and team contribution sign-off are separate submission deliverables; this repository state alone does not prove those have been completed.
 
-## 7. Final repository checkpoint
+## 8. Final repository checkpoint
 
 ```text
 main
