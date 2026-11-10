@@ -249,6 +249,7 @@ run_test application_service_vault_exclusion_test
 build_test restore_archive_cleanup_test \
     -DSFV_ENABLE_TEST_HOOK \
     src/restore_archive_cleanup_test.cpp \
+    src/file_manager.cpp \
     src/vault_service.cpp \
     src/inactivity.cpp \
     src/archive_service.cpp \

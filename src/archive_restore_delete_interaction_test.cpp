@@ -1,5 +1,6 @@
 
 #include "vault_service.h"
+#include "restore.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -189,14 +190,16 @@ int main()
     // This recreates the original pathname with a new file identity.
     std::string restoredPath;
 
+    const fs::path metadataPath =
+        vaultRoot / "metadata" / (metadata.archiveId + ".meta");
+
     if (!check(
-            restoreFromArchive(
-                vaultRoot.string(),
-                metadata.archiveId,
+            restoreArchive(
+                metadataPath.string(),
                 sourceDirectory.string(),
                 restoredPath
             ),
-            "archive restored through vault service")) {
+            "archive restored through the low-level restore operation")) {
         return 1;
     }
 
@@ -248,12 +251,20 @@ int main()
         return 1;
     }
 
-    // 4. Restore automatically consumes only the vault artifacts.
-    const fs::path metadataPath =
-        vaultRoot / "metadata" / (metadata.archiveId + ".meta");
+    // 4. Simulate a user editing the restored file, then invoke Delete Both
+    // for the same archive. The saved identity must prevent deletion of the
+    // newly restored/edited file at the original pathname.
+    ArchiveDeletionResult deletion{};
+    const bool deletionSucceeded = deleteArchiveFromVault(
+        vaultRoot.string(), metadata.archiveId, deletion
+    );
     if (!check(
+            deletionSucceeded && deletion.archiveDeleted &&
+            deletion.compressedRemoved && deletion.metadataRemoved &&
+            !deletion.originalDeleted && deletion.originalPreserved &&
+            !deletion.partialFailure &&
             !fs::exists(metadata.archivePath) && !fs::exists(metadataPath),
-            "restore removes compressed archive and metadata")) {
+            "Delete Both removes the selected archive but preserves the replacement original")) {
         return 1;
     }
 
@@ -263,42 +274,11 @@ int main()
             fs::exists(restoredPath) &&
             readFile(restoredPath, finalBytes) &&
             finalBytes == expectedEditedBytes,
-            "restored and user-edited destination survives automatic cleanup")) {
+            "restored and user-edited destination survives Delete Both")) {
         return 1;
     }
 
-    // 6. Verify Delete Both independently on a second disposable archive.
-    const fs::path deleteBothSource = sourceDirectory / "delete-both.txt";
-    if (!check(
-            writeReferenceFile(deleteBothSource, referenceBytes),
-            "independent Delete Both fixture created")) {
-        return 1;
-    }
-
-    ArchiveMetadata deleteBothMetadata{};
-    if (!check(
-            createArchive(
-                deleteBothSource.string(),
-                vaultRoot.string(),
-                deleteBothMetadata
-            ),
-            "independent Delete Both archive created")) {
-        return 1;
-    }
-
-    ArchiveDeletionResult deletion{};
-    const bool deletionSucceeded = deleteArchiveFromVault(
-        vaultRoot.string(), deleteBothMetadata.archiveId, deletion
-    );
-    if (!check(
-            deletionSucceeded && deletion.archiveDeleted &&
-            deletion.compressedRemoved && deletion.metadataRemoved &&
-            deletion.originalDeleted && !fs::exists(deleteBothSource),
-            "Delete Both still removes its independently verified original and artifacts")) {
-        return 1;
-    }
-
-    // 7. Verify both completed operations leave no catalogue entries.
+    // 6. Verify the completed operation leaves no catalogue entries.
     const std::vector<ArchiveMetadata> remainingArchives =
         getAllArchives(vaultRoot.string());
     if (!check(

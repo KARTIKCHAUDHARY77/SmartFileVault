@@ -1,4 +1,5 @@
 #include "archive_service.h"
+#include "file_manager.h"
 #include "vault_service.h"
 
 #include <filesystem>
@@ -7,6 +8,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <set>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -137,6 +139,36 @@ int main()
     }
     if (!check(getAllArchives(vault.string()).empty(),
                "restored archive is removed from catalogue")) {
+        return 1;
+    }
+
+    // Scan the source parent after restore cleanup. The vault subtree must
+    // remain excluded, while an ordinary similarly named sibling and the
+    // published restore destination remain discoverable.
+    const fs::path similarSibling = temporary.path / "success-vault-backup";
+    if (!check(writeFixture(similarSibling / "ordinary.txt", actual),
+               "similarly named ordinary sibling fixture created")) {
+        return 1;
+    }
+
+    FileScanResult postRestoreScan{};
+    if (!check(scanDirectory(
+                   temporary.path.string(), 30, postRestoreScan, vault.string()),
+               "scanner succeeds after restore cleanup")) {
+        return 1;
+    }
+
+    std::set<std::string> postRestoreNames;
+    for (const FileMetadata& item : postRestoreScan.files) {
+        postRestoreNames.insert(item.fileName);
+    }
+    if (!check(postRestoreNames.count("success.bin") == 1 &&
+               postRestoreNames.count("ordinary.txt") == 1 &&
+               postRestoreNames.count("success.gz") == 0 &&
+               postRestoreNames.count("success.meta") == 0 &&
+               postRestoreScan.skippedFiles == 0 &&
+               postRestoreScan.skippedDetails.empty(),
+               "post-restore scan sees restored and sibling files but no consumed vault artifacts")) {
         return 1;
     }
 
