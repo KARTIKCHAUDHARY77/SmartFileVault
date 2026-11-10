@@ -1030,10 +1030,40 @@ std::vector<ArchiveMetadata> getAllArchives(
                 entry.path().string(),
                 metadata
             )) {
+            // Catalogue entries remain visible when only metadata survives a
+            // partial restore cleanup, but storage totals must reflect bytes
+            // actually present in the trusted compressed directory.
+            metadata.compressedSize = 0;
+            if (isSafeArchiveId(metadata.archiveId) &&
+                !metadata.originalName.empty() &&
+                metadata.originalName != "." &&
+                metadata.originalName != ".." &&
+                metadata.originalName.find('/') == std::string::npos &&
+                metadata.originalName.find('\\') == std::string::npos &&
+                metadata.originalName.find('\0') == std::string::npos) {
+                std::error_code pathError;
+                const fs::path root = fs::absolute(archiveRoot, pathError).lexically_normal();
+                if (!pathError) {
+                    const fs::path expectedPath = fs::absolute(
+                        root / "compressed" /
+                        (metadata.archiveId + "_" + metadata.originalName + ".gz"),
+                        pathError
+                    ).lexically_normal();
+                    if (!pathError &&
+                        fs::path(metadata.archivePath).is_absolute() &&
+                        fs::path(metadata.archivePath).lexically_normal() == expectedPath) {
+                        struct stat compressedStatus {};
+                        if (::lstat(expectedPath.c_str(), &compressedStatus) == 0 &&
+                            S_ISREG(compressedStatus.st_mode) &&
+                            compressedStatus.st_size >= 0) {
+                            metadata.compressedSize =
+                                static_cast<std::uintmax_t>(compressedStatus.st_size);
+                        }
+                    }
+                }
+            }
 
-            archives.push_back(
-                metadata
-            );
+            archives.push_back(metadata);
         }
     }
 

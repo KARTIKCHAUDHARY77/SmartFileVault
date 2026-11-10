@@ -160,6 +160,7 @@ const backend = {
             if (!response.ok || data.success !== true) {
                 showConnectionStatus(response.ok);
                 return {
+                    ...data,
                     success: false,
                     message: data.message || "Restore failed."
                 };
@@ -281,7 +282,7 @@ function getStatusText(status) {
         active: "Active",
         inactive: "Inactive",
         archived: "Archived",
-        restored: "Restored (archive retained)",
+        restored: "Restored",
         skipped: "Skipped"
     };
 
@@ -313,16 +314,13 @@ function markArchiveRestored(archiveId) {
     );
 }
 
-function getArchiveRestoreActionText(archiveId) {
-    return getRestoredArchiveIds().has(archiveId)
-        ? "Restore Again"
-        : "Restore";
+function getArchiveRestoreActionText() {
+    // A successful restore consumes the archive; the backend catalogue is authoritative.
+    return "Restore";
 }
 
 function getVisibleArchives(archives) {
-    // Restoring an archive does not remove the compressed archive from the
-    // backend vault. Keep it visible so storage totals and delete actions
-    // continue to reflect the actual vault contents.
+    // The backend catalogue is authoritative after restore cleanup.
     return archives;
 }
 
@@ -634,21 +632,27 @@ async function confirmRestore() {
 
     const result = await backend.restore(archiveId, destination);
 
-    if (!result.success) {
-        alert(result.message || "Restore failed.");
+    if (!result.success || result.restored !== true) {
+        alert(result.message || "Restore failed. The archive remains available.");
         return;
     }
-    markArchiveRestored(archiveId);
-    alert(
-        "File restored successfully.\n" +
-        (result.restoredPath || "")
-    );
 
+    // Clear any legacy local marker; the backend catalogue decides visibility.
+    forgetRestoredArchive(archiveId);
     closeRestoreModal();
+
+    let message = result.message || "File restored successfully.";
+    if (result.partialFailure) {
+        message += "\nSome archive cleanup or report-update steps need attention.";
+    }
+    if (result.restoredPath) {
+        message += "\n" + result.restoredPath;
+    }
 
     await updateDashboard();
     await displayRestoreFiles();
     await displayFiles();
+    alert(message);
 }
 function formatBytes(bytes) {
     if (bytes == null || !Number.isFinite(Number(bytes))) {
