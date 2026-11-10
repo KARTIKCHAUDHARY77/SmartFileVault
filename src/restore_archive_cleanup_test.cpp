@@ -182,6 +182,8 @@ int main()
     ArchiveRestoreResult metadataFailure{};
     const fs::path remainingMetadata = metadataFailureVault / "metadata" /
         (metadataFailureMeta.archiveId + ".meta");
+    const std::vector<ArchiveMetadata> partiallyCleanedCatalogue =
+        getAllArchives(metadataFailureVault.string());
     if (!check(restoreFromArchive(
                    metadataFailureVault.string(), metadataFailureMeta.archiveId,
                    (temporary.path / "metadata-failure-out").string(), metadataFailure) &&
@@ -189,9 +191,10 @@ int main()
                metadataFailure.compressedRemoved && !metadataFailure.metadataRemoved &&
                !fs::exists(metadataFailureMeta.archivePath) &&
                fs::exists(remainingMetadata) &&
-               getAllArchives(metadataFailureVault.string()).size() == 1 &&
+               partiallyCleanedCatalogue.size() == 1 &&
+               partiallyCleanedCatalogue[0].compressedSize == 0 &&
                fs::exists(metadataFailure.restoredPath),
-               "metadata deletion failure reports partial success and retains discoverable metadata")) {
+               "metadata deletion failure keeps a discoverable record with zero remaining compressed bytes")) {
         return 1;
     }
 
