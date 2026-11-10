@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -265,6 +266,134 @@ int main()
                !shaFailure.restored && fs::exists(shaMeta.archivePath) &&
                fs::exists(shaMetadataPath) && !fs::exists(shaOutput),
                "SHA-256 mismatch preserves archive and prevents publication")) {
+        return 1;
+    }
+
+    // A pre-existing destination is never overwritten; the numbered name is used.
+    fs::path collisionVault;
+    ArchiveMetadata collisionMeta{};
+    std::string collisionBytes;
+    if (!check(makeArchive(temporary.path, "collision", collisionVault,
+                           collisionMeta, collisionBytes),
+               "destination collision fixture archived")) {
+        return 1;
+    }
+    const fs::path collisionDestination = temporary.path / "collision-out";
+    std::error_code collisionError;
+    fs::create_directories(collisionDestination, collisionError);
+    const fs::path occupiedPath = collisionDestination / "collision.bin";
+    const std::string occupiedBytes = "Existing destination must remain untouched.";
+    {
+        std::ofstream occupied(occupiedPath, std::ios::binary);
+        occupied << occupiedBytes;
+    }
+    ArchiveRestoreResult collision{};
+    if (!check(restoreFromArchive(collisionVault.string(), collisionMeta.archiveId,
+                                  collisionDestination.string(), collision) &&
+               collision.restored &&
+               collision.restoredPath ==
+                   (collisionDestination / "collision (1).bin").string() &&
+               readBytes(occupiedPath, actual) && actual == occupiedBytes &&
+               readBytes(collision.restoredPath, actual) && actual == collisionBytes,
+               "existing destination is preserved and restored file uses a numbered name")) {
+        return 1;
+    }
+
+    // A truncated GZIP stream must fail before publication and preserve artifacts.
+    fs::path corruptVault;
+    ArchiveMetadata corruptMeta{};
+    std::string corruptBytes;
+    if (!check(makeArchive(temporary.path, "corrupt", corruptVault, corruptMeta, corruptBytes),
+               "corrupt GZIP fixture archived")) {
+        return 1;
+    }
+    const auto compressedSize = fs::file_size(corruptMeta.archivePath);
+    fs::resize_file(corruptMeta.archivePath, compressedSize / 2);
+    ArchiveRestoreResult corrupt{};
+    const fs::path corruptDestination = temporary.path / "corrupt-out";
+    if (!check(!restoreFromArchive(corruptVault.string(), corruptMeta.archiveId,
+                                   corruptDestination.string(), corrupt) &&
+               !corrupt.restored && fs::exists(corruptMeta.archivePath) &&
+               fs::exists(corruptVault / "metadata" /
+                          (corruptMeta.archiveId + ".meta")) &&
+               !fs::exists(corruptDestination / "corrupt.bin"),
+               "truncated GZIP failure preserves archive and metadata without publication")) {
+        return 1;
+    }
+
+    // A metadata size larger than available space is rejected before decompression.
+    fs::path spaceVault;
+    ArchiveMetadata spaceMeta{};
+    std::string spaceBytes;
+    if (!check(makeArchive(temporary.path, "space", spaceVault, spaceMeta, spaceBytes),
+               "insufficient-space fixture archived")) {
+        return 1;
+    }
+    const fs::path spaceMetadataPath =
+        spaceVault / "metadata" / (spaceMeta.archiveId + ".meta");
+    if (!loadArchiveMetadata(spaceMetadataPath.string(), spaceMeta)) return 1;
+    spaceMeta.originalSize = std::numeric_limits<std::uintmax_t>::max();
+    spaceMeta.hasOriginalFileIdentity = false;
+    if (!check(saveArchiveMetadata(spaceMetadataPath.string(), spaceMeta),
+               "insufficient-space metadata fixture saved")) {
+        return 1;
+    }
+    ArchiveRestoreResult noSpace{};
+    if (!check(!restoreFromArchive(spaceVault.string(), spaceMeta.archiveId,
+                                   (temporary.path / "space-out").string(), noSpace) &&
+               !noSpace.restored && fs::exists(spaceMeta.archivePath) &&
+               fs::exists(spaceMetadataPath),
+               "insufficient restore space preserves archive and metadata")) {
+        return 1;
+    }
+
+    // Destination validation failure also leaves the vault copy intact.
+    fs::path destinationFailureVault;
+    ArchiveMetadata destinationFailureMeta{};
+    std::string destinationFailureBytes;
+    if (!check(makeArchive(temporary.path, "destination-failure",
+                           destinationFailureVault, destinationFailureMeta,
+                           destinationFailureBytes),
+               "destination-failure fixture archived")) {
+        return 1;
+    }
+    const fs::path destinationIsFile = temporary.path / "not-a-directory";
+    {
+        std::ofstream file(destinationIsFile);
+        file << "not a directory";
+    }
+    ArchiveRestoreResult destinationFailure{};
+    if (!check(!restoreFromArchive(destinationFailureVault.string(),
+                                   destinationFailureMeta.archiveId,
+                                   destinationIsFile.string(), destinationFailure) &&
+               !destinationFailure.restored &&
+               fs::exists(destinationFailureMeta.archivePath) &&
+               fs::exists(destinationFailureVault / "metadata" /
+                          (destinationFailureMeta.archiveId + ".meta")),
+               "invalid destination failure preserves archive and metadata")) {
+        return 1;
+    }
+
+    // Missing compressed archive must not cause the remaining metadata to be deleted.
+    fs::path missingCompressedVault;
+    ArchiveMetadata missingCompressedMeta{};
+    std::string missingCompressedBytes;
+    if (!check(makeArchive(temporary.path, "missing-compressed",
+                           missingCompressedVault, missingCompressedMeta,
+                           missingCompressedBytes),
+               "missing-compressed fixture archived")) {
+        return 1;
+    }
+    fs::remove(missingCompressedMeta.archivePath);
+    ArchiveRestoreResult missingCompressed{};
+    if (!check(!restoreFromArchive(missingCompressedVault.string(),
+                                   missingCompressedMeta.archiveId,
+                                   (temporary.path / "missing-compressed-out").string(),
+                                   missingCompressed) &&
+               missingCompressed.errorCode == "archive_not_found" &&
+               fs::exists(missingCompressedVault / "metadata" /
+                          (missingCompressedMeta.archiveId + ".meta")),
+               "missing compressed archive leaves its metadata untouched")) {
         return 1;
     }
 
