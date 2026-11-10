@@ -148,9 +148,9 @@ These manual checks used only disposable fixtures, not real user vault archives.
 ## 7. Current known boundaries and pending non-code confirmations
 
 - The current macOS CI runner is targeted; individual standalone tests not listed in that runner still need to be run separately when full exhaustive unit-test coverage is required.
-- The PR #27 discussion included the response contract for Aastha and the filesystem/concurrency review points for Kartik. This handover audit did not establish independent written acceptance from either teammate.
+- The PR #27 discussion contains Akshat's response-contract and review-request comment for Aastha and Kartik. The retrieved PR discussion/review records did not show an independent teammate response or approval. Obtain their sign-off during the team handover if the course requires it.
 - Older development branches remain on GitHub. Some are far behind `main`; a small number contain divergent historical commits. They were not merged or deleted as part of this work. Review before any branch cleanup or cherry-pick.
-- No GitHub Release/tag was present at the time of this audit. Creating a versioned release should follow the team's submission/release decision rather than happen implicitly.
+- No GitHub Release was present at the time of this audit. Git tags were not separately verified. Creating a versioned release should follow the team's submission/release decision rather than happen implicitly.
 - The final academic project report, presentation deck, demo script/video and team contribution sign-off are separate submission deliverables; this repository state alone does not prove those have been completed.
 
 ## 8. Final repository checkpoint
