@@ -265,12 +265,13 @@ int main()
         return 1;
     }
     ArchiveRestoreResult shaFailure{};
-    const fs::path shaOutput = temporary.path / "sha-output";
+    const fs::path shaOutputDirectory = temporary.path / "sha-output";
+    const fs::path shaOutput = shaOutputDirectory / "sha-mismatch.bin";
     if (!check(!restoreFromArchive(shaVault.string(), shaMeta.archiveId,
-                                   shaOutput.string(), shaFailure) &&
+                                   shaOutputDirectory.string(), shaFailure) &&
                !shaFailure.restored && fs::exists(shaMeta.archivePath) &&
                fs::exists(shaMetadataPath) && !fs::exists(shaOutput),
-               "SHA-256 mismatch preserves archive and prevents publication")) {
+               "SHA-256 mismatch preserves archive and prevents final-file publication")) {
         return 1;
     }
 
