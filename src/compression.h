@@ -18,6 +18,11 @@ bool decompressFile(
     const std::string& expectedSha256 = {}
 );
 
+#ifdef SFV_ENABLE_TEST_HOOK
+// Test-only seam invoked immediately before atomic restore-output publication.
+void setDecompressionPublicationTestHook(void (*hook)());
+#endif
+
 bool compressionProvidesBenefit(
     const std::string& originalPath,
     const std::string& compressedPath

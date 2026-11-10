@@ -1,4 +1,5 @@
 #include "archive_service.h"
+#include "compression.h"
 #include "file_manager.h"
 #include "vault_service.h"
 
@@ -17,6 +18,28 @@ namespace fs = std::filesystem;
 
 namespace {
 std::string failureStep;
+
+#ifdef SFV_ENABLE_TEST_HOOK
+fs::path publicationCollisionPath;
+bool publicationCollisionCreated = false;
+const std::string publicationCollisionBytes =
+    "A competing destination must never be overwritten.";
+
+void createPublicationCollision()
+{
+    std::ofstream output(
+        publicationCollisionPath,
+        std::ios::binary | std::ios::trunc
+    );
+    if (!output) {
+        return;
+    }
+
+    output << publicationCollisionBytes;
+    output.close();
+    publicationCollisionCreated = !output.fail();
+}
+#endif
 
 #ifdef SFV_ENABLE_TEST_HOOK
 bool failCleanupStep(const std::string& step)
@@ -457,6 +480,64 @@ int main()
                fs::exists(destinationFailureVault / "metadata" /
                           (destinationFailureMeta.archiveId + ".meta")),
                "invalid destination failure preserves archive and metadata")) {
+        return 1;
+    }
+
+    // Force a competing file to appear after verified decompression and
+    // temporary-file sync, immediately before the atomic final link().
+    // This exercises the real publication failure path, not destination setup.
+    fs::path publicationFailureVault;
+    ArchiveMetadata publicationFailureMeta{};
+    std::string publicationFailureBytes;
+    if (!check(makeArchive(temporary.path, "publication-failure",
+                           publicationFailureVault, publicationFailureMeta,
+                           publicationFailureBytes),
+               "publication-failure fixture archived")) {
+        return 1;
+    }
+
+    const fs::path publicationFailureDirectory =
+        temporary.path / "publication-failure-out";
+    publicationCollisionPath =
+        publicationFailureDirectory / "publication-failure.bin";
+    publicationCollisionCreated = false;
+    setDecompressionPublicationTestHook(createPublicationCollision);
+
+    ArchiveRestoreResult publicationFailure{};
+    const bool publicationRestoreReturned = restoreFromArchive(
+        publicationFailureVault.string(),
+        publicationFailureMeta.archiveId,
+        publicationFailureDirectory.string(),
+        publicationFailure
+    );
+    setDecompressionPublicationTestHook(nullptr);
+
+    std::string competingDestinationBytes;
+    bool temporaryOutputRemains = false;
+    std::error_code publicationDirectoryError;
+    if (fs::exists(publicationFailureDirectory, publicationDirectoryError) &&
+        !publicationDirectoryError) {
+        for (const auto& entry :
+             fs::directory_iterator(publicationFailureDirectory)) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind(".sfv-output-", 0) == 0) {
+                temporaryOutputRemains = true;
+                break;
+            }
+        }
+    }
+
+    const fs::path publicationFailureMetadata =
+        publicationFailureVault / "metadata" /
+        (publicationFailureMeta.archiveId + ".meta");
+    if (!check(!publicationRestoreReturned && !publicationFailure.restored &&
+               publicationCollisionCreated &&
+               readBytes(publicationCollisionPath, competingDestinationBytes) &&
+               competingDestinationBytes == publicationCollisionBytes &&
+               fs::exists(publicationFailureMeta.archivePath) &&
+               fs::exists(publicationFailureMetadata) &&
+               !temporaryOutputRemains,
+               "atomic publication collision preserves vault artifacts and competing destination, with no temp output")) {
         return 1;
     }
 
