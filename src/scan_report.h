@@ -17,4 +17,10 @@ bool reconcileScanReportAfterPermanentDelete(
     std::string& errorMessage
 );
 
+
+#ifdef SFV_ENABLE_TEST_HOOK
+// Test-only hook for simulating scan-report persistence failures.
+void setScanReportWriteTestHook(bool (*hook)());
+#endif
+
 #endif
