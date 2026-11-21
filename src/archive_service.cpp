@@ -728,6 +728,9 @@ bool permanentlyDeleteArchive(
         setOriginalPreserved(result, "preserved_unsafe_or_inconsistent_path");
     }
     else {
+        // Keep the exact metadata path only after path-safety checks. The
+        // identity-protection logic below remains unchanged.
+        result.originalPath = originalPath.lexically_normal().string();
         bool originalExists = false;
         int originalFailure = 0;
         const bool safeFileType = inspectRegularFileNoFollow(
