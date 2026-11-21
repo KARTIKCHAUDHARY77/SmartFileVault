@@ -88,6 +88,23 @@ build_test scan_report_reconciliation_test \
     src/scan_report.cpp
 run_test scan_report_reconciliation_test
 
+# Preserve the original deletion identity-protection behavior, including
+# legacy missing originals and compressed/metadata/original unlink failures.
+build_test archive_permanent_deletion_test \
+    -DSFV_ENABLE_TEST_HOOK \
+    src/archive_permanent_deletion_test.cpp \
+    src/file_manager.cpp \
+    src/vault_service.cpp \
+    src/inactivity.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp
+run_test archive_permanent_deletion_test
+
 # Core compression behavior and byte-exact round trips.
 build_test compression_test \
     src/compression_test.cpp \
