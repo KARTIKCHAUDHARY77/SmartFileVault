@@ -44,6 +44,24 @@ int main(int argc, char** argv)
         return 6;
     }
 
+    {
+        std::ofstream report(vault / "scan_report.json", std::ios::binary | std::ios::trunc);
+        report << "{\\n"
+               << "  \\"totalFiles\\": 1,\\n"
+               << "  \\"inactiveFiles\\": 1,\\n"
+               << "  \\"activeFiles\\": 0,\\n"
+               << "  \\"skippedFiles\\": 1,\\n"
+               << "  \\"skippedDetails\\": [{\\"filePath\\":\\"/skipped\\",\\"reason\\":\\"fixture\\}],\\n"
+               << "  \\"files\\": [{\\"fileName\\":\\"api-delete.txt\\","
+               << "\\"filePath\\":\\"" << original.string() << "\\","
+               << "\\"extension\\":\\".txt\\",\\"size\\":1,"
+               << "\\"sizeText\\":\\"1 B\\",\\"lastModified\\":1,"
+               << "\\"status\\":\\"inactive\\"}]\\n"
+               << "}\\n";
+        report.close();
+        if (report.fail()) return 9;
+    }
+
     std::ofstream idFile(root / "archive_id.txt", std::ios::trunc);
     idFile << metadata.archiveId;
     idFile.close();
