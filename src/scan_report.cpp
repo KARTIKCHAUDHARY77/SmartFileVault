@@ -443,7 +443,8 @@ bool reconcileScanReportAfterPermanentDelete(
 
     // archiveDeleted alone is insufficient: both vault artifacts must be
     // gone, and the original must actually be gone (or already missing).
-    if (!deletion.compressedRemoved || !deletion.metadataRemoved ||
+    if (!deletion.archiveDeleted ||
+        !deletion.compressedRemoved || !deletion.metadataRemoved ||
         (!deletion.originalDeleted && !deletion.originalMissing) ||
         deletion.originalPreserved || deletion.originalPath.empty()) {
         return true;
