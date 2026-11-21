@@ -3,6 +3,7 @@
 #include "vault_service.h"
 #include "archive.h"
 #include "vault_report.h"
+#include "scan_report.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -540,11 +541,24 @@ void DashboardController::deleteSelectedArchive(const QString& archiveId)
         QtConcurrent::run([archiveRoot, archiveId]() {
             ArchiveDeletionResult result{};
 
-            deleteArchiveFromVault(
+            const bool deletionSucceeded = deleteArchiveFromVault(
                 archiveRoot.toStdString(),
                 archiveId.toStdString(),
                 result
             );
+
+            std::string scanReportError;
+            result.scanReportUpdated = reconcileScanReportAfterPermanentDelete(
+                QDir(archiveRoot).filePath("scan_report.json").toStdString(),
+                result,
+                scanReportError
+            );
+            if (!result.scanReportUpdated) {
+                result.partialFailure = true;
+                result.errorCode = "scan_report_update_failed";
+                if (!result.message.empty()) result.message += " ";
+                result.message += scanReportError;
+            }
 
             if (result.archiveDeleted) {
                 const QString reportPath =
@@ -564,6 +578,7 @@ void DashboardController::deleteSelectedArchive(const QString& archiveId)
 
                     result.message +=
                         "The archive was deleted, but vault_report.json could not be updated.";
+                    if (result.errorCode.empty()) result.errorCode = "vault_report_update_failed";
                 }
             }
 
