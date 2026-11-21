@@ -83,7 +83,7 @@ run_test() {
 # Scan-report deletion reconciliation: outcome gating, exact paths, counters,
 # skipped metadata preservation, and atomic persistence failure reporting.
 build_test scan_report_reconciliation_test \
-    -DSFV_ENABLE_TEST_HOOK \
+    -DSFV_ENABLE_TEST_HOOK=1 \
     tests/scan_report_reconciliation_test.cpp \
     src/scan_report.cpp
 run_test scan_report_reconciliation_test
