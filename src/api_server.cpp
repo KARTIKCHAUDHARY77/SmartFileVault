@@ -916,6 +916,10 @@ bool startApiServer(
                 }
 
                 std::string status = "200 OK";
+                if (!result.scanReportUpdated ||
+                    (result.archiveDeleted && !reportUpdated)) {
+                    status = "500 Internal Server Error";
+                }
                 if (!success) {
                     if (result.errorCode == "archive_not_found") {
                         status = "404 Not Found";
