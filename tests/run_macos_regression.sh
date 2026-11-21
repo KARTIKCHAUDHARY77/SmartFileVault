@@ -80,6 +80,14 @@ run_test() {
     (cd "$work_dir" && "$BUILD_DIR/$name")
 }
 
+# Scan-report deletion reconciliation: outcome gating, exact paths, counters,
+# skipped metadata preservation, and atomic persistence failure reporting.
+build_test scan_report_reconciliation_test \
+    -DSFV_ENABLE_TEST_HOOK \
+    tests/scan_report_reconciliation_test.cpp \
+    src/scan_report.cpp
+run_test scan_report_reconciliation_test
+
 # Core compression behavior and byte-exact round trips.
 build_test compression_test \
     src/compression_test.cpp \
