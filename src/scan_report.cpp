@@ -219,6 +219,11 @@ bool saveScanReport(
 #include <unistd.h>
 #include <vector>
 
+#ifdef SFV_ENABLE_TEST_HOOK
+namespace { bool (*scanReportWriteTestHook)() = nullptr; }
+void setScanReportWriteTestHook(bool (*hook)()) { scanReportWriteTestHook = hook; }
+#endif
+
 namespace
 {
     struct JsonSpan { std::size_t begin; std::size_t end; };
@@ -429,6 +434,9 @@ namespace
 
     bool atomicReplaceReport(const std::string& path, const std::string& data)
     {
+#ifdef SFV_ENABLE_TEST_HOOK
+        if (scanReportWriteTestHook && scanReportWriteTestHook()) return false;
+#endif
         struct stat existing {};
         if (::lstat(path.c_str(), &existing) != 0 || !S_ISREG(existing.st_mode))
             return false;
