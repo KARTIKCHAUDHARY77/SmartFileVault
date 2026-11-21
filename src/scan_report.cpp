@@ -229,6 +229,41 @@ namespace
                s[p] == '\r' || s[p] == '\t')) ++p;
     }
 
+    void appendUtf8(std::string& out, unsigned int value)
+    {
+        if (value <= 0x7f) {
+            out += static_cast<char>(value);
+        } else if (value <= 0x7ff) {
+            out += static_cast<char>(0xc0 | (value >> 6));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        } else if (value <= 0xffff) {
+            out += static_cast<char>(0xe0 | (value >> 12));
+            out += static_cast<char>(0x80 | ((value >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        } else {
+            out += static_cast<char>(0xf0 | (value >> 18));
+            out += static_cast<char>(0x80 | ((value >> 12) & 0x3f));
+            out += static_cast<char>(0x80 | ((value >> 6) & 0x3f));
+            out += static_cast<char>(0x80 | (value & 0x3f));
+        }
+    }
+
+    bool readHexCodeUnit(const std::string& s, std::size_t& p,
+                         unsigned int& value)
+    {
+        if (p + 4 > s.size()) return false;
+        value = 0;
+        for (int i = 0; i < 4; ++i) {
+            char h = s[p++];
+            int digit = h >= '0' && h <= '9' ? h - '0' :
+                        h >= 'a' && h <= 'f' ? h - 'a' + 10 :
+                        h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
+            if (digit < 0) return false;
+            value = (value << 4) | static_cast<unsigned int>(digit);
+        }
+        return true;
+    }
+
     bool parseJsonString(const std::string& s, std::size_t& p, std::string& out)
     {
         if (p >= s.size() || s[p] != '"') return false;
@@ -251,18 +286,21 @@ namespace
                 case 'r': out += '\r'; break;
                 case 't': out += '\t'; break;
                 case 'u': {
-                    if (p + 4 > s.size()) return false;
-                    unsigned int value = 0;
-                    for (int i = 0; i < 4; ++i) {
-                        char h = s[p++];
-                        int d = h >= '0' && h <= '9' ? h - '0' :
-                                h >= 'a' && h <= 'f' ? h - 'a' + 10 :
-                                h >= 'A' && h <= 'F' ? h - 'A' + 10 : -1;
-                        if (d < 0) return false;
-                        value = (value << 4) | static_cast<unsigned int>(d);
+                    unsigned int codePoint = 0;
+                    if (!readHexCodeUnit(s, p, codePoint)) return false;
+                    if (codePoint >= 0xd800 && codePoint <= 0xdbff) {
+                        if (p + 2 > s.size() || s[p] != '\\' || s[p + 1] != 'u')
+                            return false;
+                        p += 2;
+                        unsigned int low = 0;
+                        if (!readHexCodeUnit(s, p, low) ||
+                            low < 0xdc00 || low > 0xdfff) return false;
+                        codePoint = 0x10000 + ((codePoint - 0xd800) << 10) +
+                                    (low - 0xdc00);
+                    } else if (codePoint >= 0xdc00 && codePoint <= 0xdfff) {
+                        return false;
                     }
-                    if (value > 0x7f) return false;
-                    out += static_cast<char>(value);
+                    appendUtf8(out, codePoint);
                     break;
                 }
                 default: return false;
