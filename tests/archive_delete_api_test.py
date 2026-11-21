@@ -79,6 +79,16 @@ def main():
             assert payload["originalDeleted"] is True
             assert payload["originalStatus"] == "deleted"
             assert payload["reportUpdated"] is True
+            assert payload["scanReportUpdated"] is True
+
+            _, _, files_report = request_json(base + "/api/files")
+            assert files_report["totalFiles"] == 0, files_report
+            assert files_report["inactiveFiles"] == 0, files_report
+            assert files_report["activeFiles"] == 0, files_report
+            assert files_report["skippedFiles"] == 1, files_report
+            assert files_report["skippedDetails"][0]["reason"] == "fixture", files_report
+            assert files_report["files"] == [], files_report
+            print("PASS: DELETE removes the exact Files record, recalculates counts, and preserves skipped details")
 
             vault = root / "vault"
             original = root / "originals" / "api-delete.txt"
