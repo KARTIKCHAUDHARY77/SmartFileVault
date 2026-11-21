@@ -1,5 +1,6 @@
 #include "scan_report.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
