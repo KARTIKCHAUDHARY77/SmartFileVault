@@ -4,6 +4,7 @@
 #include "application_service.h"
 #include "vault_service.h"
 #include "vault_report.h"
+#include "scan_report.h"
 
 #include <algorithm>
 #include <cctype>
@@ -681,6 +682,7 @@ namespace
         json << "  \"originalStatus\": \"" << jsonEscape(result.originalStatus) << "\",\n";
         json << "  \"partialFailure\": " << (result.partialFailure ? "true" : "false") << ",\n";
         json << "  \"reportUpdated\": " << (reportUpdated ? "true" : "false") << ",\n";
+        json << "  \"scanReportUpdated\": " << (result.scanReportUpdated ? "true" : "false") << ",\n";
         json << "  \"errorCode\": \"" << jsonEscape(result.errorCode) << "\",\n";
         json << "  \"message\": \"" << jsonEscape(result.message) << "\"\n";
         json << "}";
@@ -889,11 +891,28 @@ bool startApiServer(
                     result
                 );
 
+                std::string scanReportError;
+                result.scanReportUpdated = reconcileScanReportAfterPermanentDelete(
+                    archiveRoot + "/scan_report.json", result, scanReportError
+                );
+                if (!result.scanReportUpdated) {
+                    result.partialFailure = true;
+                    result.errorCode = "scan_report_update_failed";
+                    if (!result.message.empty()) result.message += " ";
+                    result.message += scanReportError;
+                }
+
                 bool reportUpdated = false;
                 if (result.archiveDeleted) {
                     const std::string reportPath =
                         archiveRoot + "/vault_report.json";
                     reportUpdated = saveVaultReport(archiveRoot, reportPath);
+                    if (!reportUpdated) {
+                        result.partialFailure = true;
+                        if (result.errorCode.empty()) result.errorCode = "vault_report_update_failed";
+                        if (!result.message.empty()) result.message += " ";
+                        result.message += "The vault report could not be updated.";
+                    }
                 }
 
                 std::string status = "200 OK";
@@ -918,7 +937,7 @@ bool startApiServer(
                 respond(
                     clientSocket,
                     makeArchiveDeletionResponse(
-                        archiveId, result, success, reportUpdated
+                        archiveId, result, success && result.scanReportUpdated, reportUpdated
                     ),
                     status
                 );
