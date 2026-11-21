@@ -720,7 +720,29 @@ bool permanentlyDeleteArchive(
     fs::path originalPath(metadata.originalPath);
 
     if (!metadata.hasOriginalFileIdentity) {
-        setOriginalPreserved(result, "preserved_legacy_no_identity");
+        // Legacy archives cannot authorize original deletion, but a safely
+        // validated missing path can still be recognized as a stale Files
+        // record. Existing files remain preserved without identity checks.
+        if (isSafeOriginalPath(originalPath) &&
+            !pathIsWithin(root, originalPath) &&
+            originalPath.filename().string() == metadata.originalName) {
+            result.originalPath = originalPath.lexically_normal().string();
+            bool legacyOriginalExists = false;
+            int legacyOriginalFailure = 0;
+            inspectRegularFileNoFollow(
+                originalPath, legacyOriginalExists, legacyOriginalFailure
+            );
+            if (!legacyOriginalExists &&
+                (legacyOriginalFailure == ENOENT ||
+                 legacyOriginalFailure == ENOTDIR)) {
+                result.originalMissing = true;
+                result.originalStatus = "already_missing";
+            } else {
+                setOriginalPreserved(result, "preserved_legacy_no_identity");
+            }
+        } else {
+            setOriginalPreserved(result, "preserved_legacy_no_identity");
+        }
     }
     else if (!isSafeOriginalPath(originalPath) ||
              pathIsWithin(root, originalPath) ||
