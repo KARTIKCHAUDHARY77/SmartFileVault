@@ -109,9 +109,9 @@ vault-report JSON for filenames containing tabs and quotes. It also builds a
 separate API smoke server and runs HTTP, request-parser, CORS/CSRF, frontend
 syntax, frontend state regression tests, and a production-launcher smoke
 test that starts the app from outside the repository root and verifies that
-both local servers stop cleanly. The same script is run by the
-`.github/workflows/macos-regression.yml` workflow for pull requests and pushes
-targeting `main`. This is a targeted regression smoke suite, not a claim that
+both local servers stop cleanly. The same suite is executed by the
+`.github/workflows/ci-cd.yml` pipeline for pull requests, pushes, and release
+tags targeting `main`. This is a targeted regression smoke suite, not a claim that
 every standalone test in `src/` is included.
 
 ### Run the complete web application (macOS)

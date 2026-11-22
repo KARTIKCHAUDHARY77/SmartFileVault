@@ -1,0 +1,196 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Force release creation on manual trigger"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  lint-and-validate:
+    name: Lint, Syntax & Scripts
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Validate shell script syntax
+        run: |
+          bash -n scripts/run_smartfilevault.sh
+          bash -n tests/run_macos_regression.sh
+
+      - name: Validate Python test syntax
+        run: |
+          python3 -m py_compile tests/*.py
+
+      - name: Validate Frontend JavaScript syntax
+        run: |
+          node --check frontend/script.js
+          node tests/frontend_state_test.js
+
+  core-regression:
+    name: C++ Core, Concurrency & API Regression
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install native dependencies
+        run: brew install openssl@3
+
+      - name: Run complete regression test suite
+        run: bash tests/run_macos_regression.sh
+
+  desktop-build:
+    name: Native Qt 6 Desktop Application Build
+    runs-on: macos-15
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Qt 6 and build tools
+        run: |
+          brew install cmake openssl@3 qtbase qtdeclarative qtshadertools qtsvg
+
+      - name: Configure CMake
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_PREFIX_PATH=/opt/homebrew \
+            -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+
+      - name: Build Desktop Application
+        run: |
+          cmake --build build -j 4
+
+      - name: Smoke test headless desktop launch
+        run: |
+          ./build/sfv_desktop.app/Contents/MacOS/sfv_desktop -platform offscreen &
+          DESKTOP_PID=$!
+          sleep 4
+          kill "$DESKTOP_PID" || true
+          wait "$DESKTOP_PID" 2>/dev/null || true
+          echo "PASS: Headless Qt 6 desktop application launch verified"
+
+      - name: Package Desktop Application
+        run: |
+          cd build
+          zip -r ../SmartFileVault-Desktop-macOS.zip sfv_desktop.app
+
+      - name: Upload Desktop App Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartFileVault-Desktop-macOS
+          path: SmartFileVault-Desktop-macOS.zip
+          retention-days: 14
+
+  release:
+    name: Publish Release Packages (CD)
+    needs: [lint-and-validate, core-regression, desktop-build]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.force_release == true)
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: brew install openssl@3
+
+      - name: Download Desktop App Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SmartFileVault-Desktop-macOS
+
+      - name: Build production API server binary
+        run: |
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          clang++ -std=c++17 -Wall -Wextra -pedantic -O3 \
+            src/api_server_main.cpp \
+            src/api_server.cpp \
+            src/application_service.cpp \
+            src/file_manager.cpp \
+            src/inactivity.cpp \
+            src/scan_report.cpp \
+            src/vault_service.cpp \
+            src/archive_service.cpp \
+            src/archive.cpp \
+            src/compression.cpp \
+            src/compression_policy.cpp \
+            src/file_utils.cpp \
+            src/restore.cpp \
+            src/restore_safety.cpp \
+            src/vault_report.cpp \
+            -Isrc -I"$OPENSSL_PREFIX/include" \
+            -L"$OPENSSL_PREFIX/lib" -lcrypto -lz \
+            -o sfv_api_server
+
+      - name: Package Web Application Bundle
+        run: |
+          mkdir -p package/SmartFileVault-Web-macOS
+          cp sfv_api_server package/SmartFileVault-Web-macOS/
+          cp -r frontend package/SmartFileVault-Web-macOS/
+          cp -r scripts package/SmartFileVault-Web-macOS/
+          cp -r docs package/SmartFileVault-Web-macOS/
+          cp README.md package/SmartFileVault-Web-macOS/
+          tar -czf SmartFileVault-Web-macOS.tar.gz -C package SmartFileVault-Web-macOS
+
+      - name: Generate Checksums
+        run: |
+          shasum -a 256 SmartFileVault-Desktop-macOS.zip SmartFileVault-Web-macOS.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME:-v3.0.0}"
+          if [[ "$TAG_NAME" == "main" ]]; then
+            TAG_NAME="v3.0.0-manual"
+          fi
+          gh release create "$TAG_NAME" \
+            SmartFileVault-Desktop-macOS.zip \
+            SmartFileVault-Web-macOS.tar.gz \
+            SHA256SUMS.txt \
+            --title "SmartFileVault Release ${TAG_NAME}" \
+            --generate-notes

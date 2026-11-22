@@ -1,6 +1,8 @@
 .DS_Store
 # Compiled files
 SmartFileVault
+__pycache__/
+*.py[cod]
 
 # macOS
 .DS_Store
