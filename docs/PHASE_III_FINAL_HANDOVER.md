@@ -165,3 +165,29 @@ Post-merge macOS Regression #52: success
 ```
 
 Do not force-push, reset, clean, or delete historical branches as part of routine handover. Preserve uncommitted work and backups; stage only reviewed files; test before committing; use focused branches and pull requests.
+
+## 9. Addendum — 22 November 2026: Files report reconciliation and report lock
+
+This addendum records work merged after the 10 November audit above. Sections 1–8 are left unchanged as the historical record.
+
+### Files report reconciliation after permanent delete
+
+After a permanent delete (Delete Both), `reconcileScanReportAfterPermanentDelete()` removes the exact original-path record from `scan_report.json` and recalculates `totalFiles`, `inactiveFiles` and `activeFiles`. `skippedFiles` and `skippedDetails` are preserved, and duplicate basenames in different directories are distinguished by exact path. The report is changed only when the archive and both artifacts are removed and the original was deleted or is already missing; otherwise it is left untouched. The web API and the Qt desktop controller both call it, and the report is replaced atomically. This work was authored by Astha.
+
+### Shared scan report lock
+
+Scan publication and delete reconciliation both modify `scan_report.json`. Without synchronization, a scan could publish an older snapshot after reconciliation had removed a deleted file, so the file reappeared in the report.
+
+- `ScanReportLock` (`src/scan_report.h`) is an exclusive POSIX `flock` on the sidecar file `<archiveRoot>/scan_report.json.lock`. The lock file is intentionally never deleted.
+- `runScanAndArchive()` takes the lock before scanning and holds it until the report is published, then releases it **before** `processInactiveFiles()`.
+- Reconciliation holds the same lock across its whole read-modify-write.
+- `saveScanReport()` locks; `saveScanReportLocked()` is for callers that already hold the lock. The lock must never be taken recursively.
+- The report lock is never held together with the vault mutex.
+
+Regression coverage: `tests/scan_report_concurrency_test.cpp`, part of `tests/run_macos_regression.sh`, calls the real `runScanAndArchive()` and the real reconciliation function in both orderings. Its hooks compile only under `SFV_ENABLE_TEST_HOOK`. The test fails when the lock is removed, released early or weakened. The full macOS regression suite passed on the merged change.
+
+### Boundaries
+
+- The Qt desktop app uses the same entry points. It was not built or run as part of this change, so its verification is by code review only.
+- The lock is validated on macOS only. Behaviour on network filesystems, where `flock` semantics can differ, has not been tested.
+- A scan now creates the vault directory before scanning, so a failed scan can leave an empty vault directory.
