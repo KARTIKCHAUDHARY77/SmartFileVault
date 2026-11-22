@@ -224,6 +224,37 @@ static bool testLegacyOriginalPreserved(const fs::path& root)
     );
 }
 
+static bool testLegacyMissingOriginal(const fs::path& root)
+{
+    const fs::path original = root / "legacy-missing" / "legacy.txt";
+    const fs::path vault = root / "vault-legacy-missing";
+    ArchiveMetadata metadata{};
+    fs::create_directories(original.parent_path());
+
+    if (!createFixture(vault, original, metadata)) {
+        return check(false, "legacy missing-original fixture created");
+    }
+
+    metadata.hasOriginalFileIdentity = false;
+    metadata.originalFileIdentity = OriginalFileIdentity{};
+    if (!saveArchiveMetadata(metadataPath(vault, metadata).string(), metadata)) {
+        return check(false, "legacy missing-original metadata saved");
+    }
+    fs::remove(original);
+
+    ArchiveDeletionResult result;
+    const bool deleted = permanentlyDeleteArchive(
+        vault.string(), metadata.archiveId, result
+    );
+
+    return check(
+        deleted && result.archiveDeleted && result.originalMissing &&
+        result.originalPath == original.lexically_normal().string() &&
+        result.originalStatus == "already_missing",
+        "legacy metadata recognizes a missing original for stale Files reconciliation without deleting any original"
+    );
+}
+
 static bool testMissingOriginalAndParent(const fs::path& root)
 {
     const fs::path original = root / "missing" / "missing.txt";
@@ -444,6 +475,34 @@ struct DeletionHookReset {
     }
 };
 
+static bool testCompressedRemovalPartialFailure(const fs::path& root)
+{
+    const fs::path original = root / "partial-compressed" / "source.txt";
+    const fs::path vault = root / "vault-partial-compressed";
+    ArchiveMetadata metadata{};
+    fs::create_directories(original.parent_path());
+
+    if (!createFixture(vault, original, metadata)) {
+        return check(false, "compressed-partial-failure fixture created");
+    }
+
+    DeletionHookReset reset;
+    deletionFailurePoint = "compressed_unlink";
+    setArchiveDeletionTestHook(failSelectedDeletionStep);
+
+    ArchiveDeletionResult result;
+    const bool deleted = permanentlyDeleteArchive(
+        vault.string(), metadata.archiveId, result
+    );
+
+    return check(
+        !deleted && !result.archiveDeleted && !result.compressedRemoved &&
+        !result.metadataRemoved && fs::exists(metadata.archivePath) &&
+        fs::exists(metadataPath(vault, metadata)) && fs::exists(original),
+        "compressed unlink failure leaves both archive metadata and original untouched"
+    );
+}
+
 static bool testMetadataRemovalPartialFailure(const fs::path& root)
 {
     const fs::path original = root / "partial-metadata" / "source.txt";
@@ -551,6 +610,7 @@ int main()
     passed = testDeleteVerifiedOriginal(temporary.path) && passed;
     passed = testSameContentReplacementPreserved(temporary.path) && passed;
     passed = testLegacyOriginalPreserved(temporary.path) && passed;
+    passed = testLegacyMissingOriginal(temporary.path) && passed;
     passed = testMissingOriginalAndParent(temporary.path) && passed;
     passed = testMissingCompressedArchivePreservesOriginal(temporary.path) && passed;
     passed = testInvalidIdAndMissingMetadata(temporary.path) && passed;
@@ -559,6 +619,7 @@ int main()
     passed = testUnsafeRecordedArchivePathPreserved(temporary.path) && passed;
     passed = testOriginalSymlinkPreserved(temporary.path) && passed;
 #ifdef SFV_ENABLE_TEST_HOOK
+    passed = testCompressedRemovalPartialFailure(temporary.path) && passed;
     passed = testMetadataRemovalPartialFailure(temporary.path) && passed;
     passed = testOriginalRemovalPartialFailure(temporary.path) && passed;
 #endif

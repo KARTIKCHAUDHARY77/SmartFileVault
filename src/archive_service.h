@@ -25,6 +25,9 @@ struct ArchiveDeletionResult {
     bool originalMissing = false;
     bool partialFailure = false;
     std::string originalStatus = "not_checked";
+    // Exact validated original path used only for scan-report reconciliation.
+    std::string originalPath;
+    bool scanReportUpdated = false;
     std::string errorCode;
     std::string message;
 };
