@@ -88,6 +88,28 @@ build_test scan_report_reconciliation_test \
     src/scan_report.cpp
 run_test scan_report_reconciliation_test
 
+# Production-path concurrency: the real runScanAndArchive() and the real
+# reconcileScanReportAfterPermanentDelete() must coordinate through the shared
+# scan_report.json lock in both orderings. Test hooks are enabled for this
+# binary only.
+build_test scan_report_concurrency_test \
+    -DSFV_ENABLE_TEST_HOOK=1 \
+    tests/scan_report_concurrency_test.cpp \
+    src/application_service.cpp \
+    src/file_manager.cpp \
+    src/inactivity.cpp \
+    src/scan_report.cpp \
+    src/vault_service.cpp \
+    src/archive_service.cpp \
+    src/archive.cpp \
+    src/compression.cpp \
+    src/compression_policy.cpp \
+    src/file_utils.cpp \
+    src/restore.cpp \
+    src/restore_safety.cpp \
+    src/vault_report.cpp
+run_test scan_report_concurrency_test
+
 # Preserve the original deletion identity-protection behavior, including
 # legacy missing originals and compressed/metadata/original unlink failures.
 build_test archive_permanent_deletion_test \

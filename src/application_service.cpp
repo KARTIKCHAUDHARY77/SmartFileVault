@@ -7,6 +7,14 @@
 
 namespace fs = std::filesystem;
 
+#ifdef SFV_ENABLE_TEST_HOOK
+namespace { void (*scanBeforeReportPublishTestHook)() = nullptr; }
+void setScanBeforeReportPublishTestHook(void (*hook)())
+{
+    scanBeforeReportPublishTestHook = hook;
+}
+#endif
+
 bool runScanAndArchive(const std::string& directoryPath,
                        int inactiveDays,
                        const std::string& archiveRoot,
@@ -19,18 +27,7 @@ bool runScanAndArchive(const std::string& directoryPath,
 
     FileScanResult scanResult;
 
-    // Scan the selected directory first.
-    if (!scanDirectory(directoryPath, inactiveDays, scanResult, archiveRoot)) {
-        return false;
-    }
-
-    result.scannedFiles =
-        static_cast<int>(scanResult.files.size());
-
-    result.scanSkippedFiles =
-        scanResult.skippedFiles;
-
-    // Make sure the report directory exists.
+    // Make sure the report directory exists before locking the report.
     std::error_code directoryError;
 
     fs::create_directories(archiveRoot, directoryError);
@@ -39,15 +36,46 @@ bool runScanAndArchive(const std::string& directoryPath,
         return false;
     }
 
-    // Save the scan snapshot for the API and frontend.
     fs::path reportPath =
         fs::path(archiveRoot) / "scan_report.json";
 
-    if (!saveScanReport(scanResult, reportPath.string())) {
-        return false;
+    {
+        // Hold the report lock from before the scan until the snapshot is
+        // published, so a permanent-delete reconciliation cannot be
+        // overwritten by an older scan snapshot. The lock is released at the
+        // end of this scope, before processInactiveFiles() runs.
+        ScanReportLock reportLock(reportPath.string());
+
+        if (!reportLock.locked()) {
+            return false;
+        }
+
+        // Scan the selected directory first.
+        if (!scanDirectory(directoryPath, inactiveDays, scanResult, archiveRoot)) {
+            return false;
+        }
+
+        result.scannedFiles =
+            static_cast<int>(scanResult.files.size());
+
+        result.scanSkippedFiles =
+            scanResult.skippedFiles;
+
+#ifdef SFV_ENABLE_TEST_HOOK
+        if (scanBeforeReportPublishTestHook) {
+            scanBeforeReportPublishTestHook();
+        }
+#endif
+
+        // Save the scan snapshot for the API and frontend. The lock is
+        // already held, so use the non-locking writer.
+        if (!saveScanReportLocked(scanResult, reportPath.string())) {
+            return false;
+        }
     }
 
-    // Process inactive files after saving the scan snapshot.
+    // Process inactive files after saving the scan snapshot and releasing
+    // the report lock (the vault has its own mutex; never hold both).
     if (!processInactiveFiles(
             scanResult.files,
             archiveRoot,

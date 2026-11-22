@@ -1,9 +1,14 @@
 
 #include "scan_report.h"
 
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <sys/file.h>
+#include <unistd.h>
 
 namespace
 {
@@ -88,10 +93,71 @@ namespace
     }
 }
 
+std::string ScanReportLock::lockPathFor(const std::string& reportPath)
+{
+    return reportPath + ".lock";
+}
+
+ScanReportLock::ScanReportLock(const std::string& reportPath)
+    : fd_(-1)
+{
+    const std::string lockPath = lockPathFor(reportPath);
+
+    int fd;
+    do {
+        fd = ::open(lockPath.c_str(),
+                    O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    } while (fd < 0 && errno == EINTR);
+
+    if (fd < 0) {
+        error_ = "Could not open scan report lock file: " +
+                 std::string(std::strerror(errno));
+        return;
+    }
+
+    int rc;
+    do {
+        rc = ::flock(fd, LOCK_EX);
+    } while (rc != 0 && errno == EINTR);
+
+    if (rc != 0) {
+        error_ = "Could not lock scan report: " +
+                 std::string(std::strerror(errno));
+        ::close(fd);
+        return;
+    }
+
+    fd_ = fd;
+}
+
+ScanReportLock::~ScanReportLock()
+{
+    // Never unlink the lock file: that would let different parties lock
+    // different inodes for the same logical report.
+    if (fd_ >= 0) {
+        ::flock(fd_, LOCK_UN);
+        ::close(fd_);
+    }
+}
+
 bool saveScanReport(
     const FileScanResult& result,
     const std::string& outputPath)
 {
+    ScanReportLock lock(outputPath);
+
+    if (!lock.locked()) {
+        return false;
+    }
+
+    return saveScanReportLocked(result, outputPath);
+}
+
+bool saveScanReportLocked(
+    const FileScanResult& result,
+    const std::string& outputPath)
+{
+
     std::ofstream file(outputPath, std::ios::binary);
 
     if (!file.is_open()) {
@@ -494,6 +560,14 @@ bool reconcileScanReportAfterPermanentDelete(
         (!deletion.originalDeleted && !deletion.originalMissing) ||
         deletion.originalPreserved || deletion.originalPath.empty()) {
         return true;
+    }
+
+    // Hold the same lock as scan publication for the whole read-modify-write
+    // so a concurrent scan cannot publish an older snapshot over this update.
+    ScanReportLock reportLock(reportPath);
+    if (!reportLock.locked()) {
+        errorMessage = reportLock.errorMessage();
+        return false;
     }
 
     std::ifstream input(reportPath, std::ios::binary);
