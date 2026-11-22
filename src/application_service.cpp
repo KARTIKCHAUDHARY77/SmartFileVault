@@ -17,37 +17,38 @@ bool runScanAndArchive(const std::string& directoryPath,
     result.scanSkippedFiles = 0;
     result.processResult = {};
 
-    FileScanResult scanResult;
-
-    // Scan the selected directory first.
-    if (!scanDirectory(directoryPath, inactiveDays, scanResult, archiveRoot)) {
-        return false;
-    }
-
-    result.scannedFiles =
-        static_cast<int>(scanResult.files.size());
-
-    result.scanSkippedFiles =
-        scanResult.skippedFiles;
-
-    // Make sure the report directory exists.
     std::error_code directoryError;
-
     fs::create_directories(archiveRoot, directoryError);
-
     if (directoryError) {
         return false;
     }
 
-    // Save the scan snapshot for the API and frontend.
-    fs::path reportPath =
+    const fs::path reportPath =
         fs::path(archiveRoot) / "scan_report.json";
 
-    if (!saveScanReport(scanResult, reportPath.string())) {
-        return false;
+    FileScanResult scanResult;
+
+    {
+        ScanReportLock reportLock(reportPath.string());
+        if (!reportLock.valid()) {
+            return false;
+        }
+
+        if (!scanDirectory(directoryPath, inactiveDays,
+                           scanResult, archiveRoot)) {
+            return false;
+        }
+
+        result.scannedFiles =
+            static_cast<int>(scanResult.files.size());
+        result.scanSkippedFiles = scanResult.skippedFiles;
+
+        if (!saveScanReportLocked(scanResult, reportPath.string())) {
+            return false;
+        }
     }
 
-    // Process inactive files after saving the scan snapshot.
+    // Release the report lock before processing; vault operations lock internally.
     if (!processInactiveFiles(
             scanResult.files,
             archiveRoot,
@@ -56,6 +57,5 @@ bool runScanAndArchive(const std::string& directoryPath,
     }
 
     result.success = true;
-
     return true;
 }

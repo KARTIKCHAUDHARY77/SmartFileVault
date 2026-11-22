@@ -1,6 +1,10 @@
 #include "scan_report.h"
 
 #include <cstdlib>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,6 +16,18 @@ namespace fs = std::filesystem;
 
 namespace
 {
+    std::mutex lockWaitMutex;
+    std::condition_variable lockWaitCondition;
+    bool lockWaitObserved = false;
+
+    void reportLockBlocked()
+    {
+        {
+            std::lock_guard<std::mutex> guard(lockWaitMutex);
+            lockWaitObserved = true;
+        }
+        lockWaitCondition.notify_one();
+    }
     bool failReportWrite()
     {
         return true;
@@ -156,6 +172,54 @@ int main()
     require(!error.empty(), "report persistence failure must include an error");
     require(readAll(report) == beforeFailure,
             "failed report persistence must leave the original report intact");
+
+
+    // A scan publishes its older snapshot while holding the report lock.
+    // The hook confirms that deletion encountered actual OS-level lock contention.
+    writeReport(report);
+    {
+        std::lock_guard<std::mutex> guard(lockWaitMutex);
+        lockWaitObserved = false;
+    }
+
+    std::atomic<bool> deletionFinished{false};
+    bool deletionSucceeded = false;
+    std::string concurrentError;
+    std::thread deletionThread;
+
+    {
+        ScanReportLock scanLock(report.string());
+        require(scanLock.valid(), "scan should acquire report lock");
+
+        setScanReportLockBlockedTestHook(reportLockBlocked);
+        deletionThread = std::thread([&]() {
+            ArchiveDeletionResult deleted = eligible("/folderA/same.txt");
+            deletionSucceeded = reconcileScanReportAfterPermanentDelete(
+                report.string(), deleted, concurrentError);
+            deletionFinished.store(true);
+        });
+
+        {
+            std::unique_lock<std::mutex> guard(lockWaitMutex);
+            lockWaitCondition.wait(guard, []() { return lockWaitObserved; });
+        }
+
+        // Deletion is confirmed blocked; publish the stale snapshot before unlock.
+        writeReport(report);
+    }
+
+    deletionThread.join();
+    setScanReportLockBlockedTestHook(nullptr);
+
+    require(deletionFinished.load(), "deletion reconciliation thread should finish");
+    require(deletionSucceeded, "concurrent deletion reconciliation should succeed");
+    updated = readAll(report);
+    require(updated.find("/folderA/same.txt") == std::string::npos,
+            "deleted path must not reappear after scan publication");
+    require(updated.find("/folderB/same.txt") != std::string::npos &&
+            updated.find("/folderC/keep.txt") != std::string::npos,
+            "unrelated Files records must remain after concurrent reconciliation");
+    std::cout << "PASS: scan publication and Delete Both reconciliation serialize under the report lock\n";
 
     fs::remove_all(root);
     std::cout << "PASS: archive/original deletion outcomes gate Files reconciliation\n";

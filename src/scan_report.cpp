@@ -88,17 +88,27 @@ namespace
     }
 }
 
+namespace {
+    bool atomicReplaceReport(const std::string& path, const std::string& data);
+}
+
 bool saveScanReport(
     const FileScanResult& result,
     const std::string& outputPath)
 {
-    std::ofstream file(outputPath, std::ios::binary);
-
-    if (!file.is_open()) {
+    ScanReportLock lock(outputPath);
+    if (!lock.valid())
         return false;
-    }
 
-    int inactiveCount = 0;
+    return saveScanReportLocked(result, outputPath);
+}
+
+bool saveScanReportLocked(
+    const FileScanResult& result,
+    const std::string& outputPath)
+{
+    std::ostringstream file;
+int inactiveCount = 0;
     int activeCount = 0;
 
     for (const auto& item : result.files) {
@@ -198,14 +208,11 @@ bool saveScanReport(
 
     // Detect disk/write errors instead of reporting success incorrectly.
     file.flush();
-
     if (!file.good()) {
         return false;
     }
 
-    file.close();
-
-    return !file.fail();
+    return atomicReplaceReport(outputPath, file.str());
 }
 
 
@@ -214,14 +221,72 @@ bool saveScanReport(
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <map>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #include <vector>
 
 #ifdef SFV_ENABLE_TEST_HOOK
-namespace { bool (*scanReportWriteTestHook)() = nullptr; }
-void setScanReportWriteTestHook(bool (*hook)()) { scanReportWriteTestHook = hook; }
+namespace
+{
+    bool (*scanReportWriteTestHook)() = nullptr;
+    void (*scanReportLockBlockedTestHook)() = nullptr;
+}
+#endif
+
+ScanReportLock::ScanReportLock(const std::string& reportPath)
+{
+    const std::string lockPath = reportPath + ".lock";
+    lockFd = ::open(lockPath.c_str(), O_CREAT | O_RDWR, 0600);
+
+    if (lockFd < 0)
+        return;
+
+    int result;
+    do {
+        result = ::flock(lockFd, LOCK_EX | LOCK_NB);
+    } while (result != 0 && errno == EINTR);
+
+    if (result != 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+#ifdef SFV_ENABLE_TEST_HOOK
+        if (scanReportLockBlockedTestHook)
+            scanReportLockBlockedTestHook();
+#endif
+        do {
+            result = ::flock(lockFd, LOCK_EX);
+        } while (result != 0 && errno == EINTR);
+    }
+
+    if (result != 0) {
+        ::close(lockFd);
+        lockFd = -1;
+    }
+}
+
+ScanReportLock::~ScanReportLock()
+{
+    if (lockFd >= 0) {
+        ::flock(lockFd, LOCK_UN);
+        ::close(lockFd);
+    }
+}
+
+bool ScanReportLock::valid() const
+{
+    return lockFd >= 0;
+}
+
+#ifdef SFV_ENABLE_TEST_HOOK
+void setScanReportWriteTestHook(bool (*hook)())
+{
+    scanReportWriteTestHook = hook;
+}
+void setScanReportLockBlockedTestHook(void (*hook)())
+{
+    scanReportLockBlockedTestHook = hook;
+}
 #endif
 
 namespace
@@ -438,15 +503,23 @@ namespace
         if (scanReportWriteTestHook && scanReportWriteTestHook()) return false;
 #endif
         struct stat existing {};
-        if (::lstat(path.c_str(), &existing) != 0 || !S_ISREG(existing.st_mode))
+        mode_t reportMode = 0600;
+
+        if (::lstat(path.c_str(), &existing) == 0) {
+            if (!S_ISREG(existing.st_mode))
+                return false;
+            reportMode = existing.st_mode & 07777;
+        } else if (errno != ENOENT) {
             return false;
+        }
+
         std::string pattern = path + ".tmp.XXXXXX";
         std::vector<char> temp(pattern.begin(), pattern.end());
         temp.push_back('\0');
         int fd = ::mkstemp(temp.data());
         if (fd < 0) return false;
         const std::string tempPath(temp.data());
-        bool ok = (::fchmod(fd, existing.st_mode & 07777) == 0);
+        bool ok = (::fchmod(fd, reportMode) == 0);
         std::size_t written = 0;
         while (ok && written < data.size()) {
             ssize_t count = ::write(fd, data.data() + written, data.size() - written);
@@ -496,6 +569,11 @@ bool reconcileScanReportAfterPermanentDelete(
         return true;
     }
 
+    ScanReportLock reportLock(reportPath);
+    if (!reportLock.valid()) {
+        errorMessage = "Could not acquire scan report lock.";
+        return false;
+    }
     std::ifstream input(reportPath, std::ios::binary);
     if (!input.is_open()) { errorMessage = "Could not open scan_report.json."; return false; }
     std::ostringstream buffer;
