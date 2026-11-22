@@ -1,9 +1,19 @@
 
 #include "scan_report.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <filesystem>
+#include <fcntl.h>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <sstream>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <vector>
 
 namespace
 {
@@ -216,17 +226,6 @@ int inactiveCount = 0;
 }
 
 
-#include <algorithm>
-#include <cerrno>
-#include <cstring>
-#include <filesystem>
-#include <fcntl.h>
-#include <sys/file.h>
-#include <map>
-#include <sys/stat.h>
-#include <unistd.h>
-
-#include <vector>
 
 #ifdef SFV_ENABLE_TEST_HOOK
 namespace
@@ -236,46 +235,51 @@ namespace
 }
 #endif
 
-ScanReportLock::ScanReportLock(const std::string& reportPath)
+std::string ScanReportLock::lockPathFor(const std::string& reportPath)
 {
-    const std::string lockPath = reportPath + ".lock";
-    lockFd = ::open(lockPath.c_str(), O_CREAT | O_RDWR, 0600);
+    return reportPath + ".lock";
+}
 
-    if (lockFd < 0)
-        return;
+ScanReportLock::ScanReportLock(const std::string& reportPath)
+    : fd_(-1)
+{
+    const std::string lockPath = lockPathFor(reportPath);
 
-    int result;
+    int fd;
     do {
-        result = ::flock(lockFd, LOCK_EX | LOCK_NB);
-    } while (result != 0 && errno == EINTR);
+        fd = ::open(lockPath.c_str(),
+                    O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    } while (fd < 0 && errno == EINTR);
 
-    if (result != 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+    if (fd < 0) {
+        error_ = "Could not open scan report lock file: " +
+                 std::string(std::strerror(errno));
+        return;
+    }
+
+    int rc;
+    do {
+        rc = ::flock(fd, LOCK_EX | LOCK_NB);
+    } while (rc != 0 && errno == EINTR);
+
+    if (rc != 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
 #ifdef SFV_ENABLE_TEST_HOOK
         if (scanReportLockBlockedTestHook)
             scanReportLockBlockedTestHook();
 #endif
         do {
-            result = ::flock(lockFd, LOCK_EX);
-        } while (result != 0 && errno == EINTR);
+            rc = ::flock(fd, LOCK_EX);
+        } while (rc != 0 && errno == EINTR);
     }
 
-    if (result != 0) {
-        ::close(lockFd);
-        lockFd = -1;
+    if (rc != 0) {
+        error_ = "Could not lock scan report: " +
+                 std::string(std::strerror(errno));
+        ::close(fd);
+        return;
     }
-}
 
-ScanReportLock::~ScanReportLock()
-{
-    if (lockFd >= 0) {
-        ::flock(lockFd, LOCK_UN);
-        ::close(lockFd);
-    }
-}
-
-bool ScanReportLock::valid() const
-{
-    return lockFd >= 0;
+    fd_ = fd;
 }
 
 #ifdef SFV_ENABLE_TEST_HOOK
@@ -283,11 +287,23 @@ void setScanReportWriteTestHook(bool (*hook)())
 {
     scanReportWriteTestHook = hook;
 }
+
 void setScanReportLockBlockedTestHook(void (*hook)())
 {
     scanReportLockBlockedTestHook = hook;
 }
 #endif
+
+ScanReportLock::~ScanReportLock()
+{
+    // Never unlink the lock file: that would let different parties lock
+    // different inodes for the same logical report.
+    if (fd_ >= 0) {
+        ::flock(fd_, LOCK_UN);
+        ::close(fd_);
+    }
+}
+
 
 namespace
 {
@@ -570,8 +586,8 @@ bool reconcileScanReportAfterPermanentDelete(
     }
 
     ScanReportLock reportLock(reportPath);
-    if (!reportLock.valid()) {
-        errorMessage = "Could not acquire scan report lock.";
+    if (!reportLock.locked()) {
+        errorMessage = reportLock.errorMessage();
         return false;
     }
     std::ifstream input(reportPath, std::ios::binary);

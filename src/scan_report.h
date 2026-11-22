@@ -14,30 +14,31 @@ public:
     ScanReportLock(const ScanReportLock&) = delete;
     ScanReportLock& operator=(const ScanReportLock&) = delete;
 
-    bool valid() const;
+    bool valid() const { return fd_ >= 0; }
+    bool locked() const { return fd_ >= 0; }
+
+    const std::string& errorMessage() const { return error_; }
+
+    static std::string lockPathFor(const std::string& reportPath);
 
 private:
-    int lockFd = -1;
+    int fd_ = -1;
+    std::string error_;
 };
 
 bool saveScanReport(const FileScanResult& result,
                     const std::string& outputPath);
 
-// Caller must hold ScanReportLock for the same report path.
 bool saveScanReportLocked(const FileScanResult& result,
                           const std::string& outputPath);
 
-// Remove the exact original-path record only after both archive artifacts are
-// gone and the original is deleted or already missing. Preserved files remain.
 bool reconcileScanReportAfterPermanentDelete(
     const std::string& reportPath,
     const ArchiveDeletionResult& deletion,
     std::string& errorMessage
 );
 
-
 #ifdef SFV_ENABLE_TEST_HOOK
-// Test-only hook for simulating scan-report persistence failures.
 void setScanReportWriteTestHook(bool (*hook)());
 void setScanReportLockBlockedTestHook(void (*hook)());
 #endif

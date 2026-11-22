@@ -7,6 +7,14 @@
 
 namespace fs = std::filesystem;
 
+#ifdef SFV_ENABLE_TEST_HOOK
+namespace { void (*scanBeforeReportPublishTestHook)() = nullptr; }
+void setScanBeforeReportPublishTestHook(void (*hook)())
+{
+    scanBeforeReportPublishTestHook = hook;
+}
+#endif
+
 bool runScanAndArchive(const std::string& directoryPath,
                        int inactiveDays,
                        const std::string& archiveRoot,
@@ -17,38 +25,57 @@ bool runScanAndArchive(const std::string& directoryPath,
     result.scanSkippedFiles = 0;
     result.processResult = {};
 
+    FileScanResult scanResult;
+
+    // Make sure the report directory exists before locking the report.
     std::error_code directoryError;
+
     fs::create_directories(archiveRoot, directoryError);
+
     if (directoryError) {
         return false;
     }
 
-    const fs::path reportPath =
+    fs::path reportPath =
         fs::path(archiveRoot) / "scan_report.json";
 
-    FileScanResult scanResult;
-
     {
+        // Hold the report lock from before the scan until the snapshot is
+        // published, so a permanent-delete reconciliation cannot be
+        // overwritten by an older scan snapshot. The lock is released at the
+        // end of this scope, before processInactiveFiles() runs.
         ScanReportLock reportLock(reportPath.string());
-        if (!reportLock.valid()) {
+
+        if (!reportLock.locked()) {
             return false;
         }
 
-        if (!scanDirectory(directoryPath, inactiveDays,
-                           scanResult, archiveRoot)) {
+        // Scan the selected directory first.
+        if (!scanDirectory(directoryPath, inactiveDays, scanResult, archiveRoot)) {
             return false;
         }
 
         result.scannedFiles =
             static_cast<int>(scanResult.files.size());
-        result.scanSkippedFiles = scanResult.skippedFiles;
 
+        result.scanSkippedFiles =
+            scanResult.skippedFiles;
+
+#ifdef SFV_ENABLE_TEST_HOOK
+        if (scanBeforeReportPublishTestHook) {
+            scanBeforeReportPublishTestHook();
+        }
+#endif
+
+        // Save the scan snapshot for the API and frontend. The lock is
+        // already held, so use the non-locking writer.
         if (!saveScanReportLocked(scanResult, reportPath.string())) {
             return false;
         }
     }
 
-    // Release the report lock before processing; vault operations lock internally.
+    // Process inactive files after saving the scan snapshot and releasing
+    // the report lock (the vault has its own mutex; never hold both).
     if (!processInactiveFiles(
             scanResult.files,
             archiveRoot,
@@ -57,5 +84,6 @@ bool runScanAndArchive(const std::string& directoryPath,
     }
 
     result.success = true;
+
     return true;
 }
